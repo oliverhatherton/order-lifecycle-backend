@@ -29,5 +29,9 @@ import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity'
   ],
   controllers: [AuthController, AdminUserController],
   providers: [AuthService, TokenService, UserService, JwtAuthGuard, RolesGuard],
+  // Exported so other feature modules (e.g. OrdersModule) can guard their
+  // routes with JwtAuthGuard. JwtModule is re-exported so the guard's
+  // JwtService dependency resolves in the importing module.
+  exports: [JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

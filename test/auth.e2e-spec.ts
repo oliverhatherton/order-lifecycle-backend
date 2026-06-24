@@ -1,15 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { Test, TestingModule } from '@nestjs/testing';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import cookieParser from 'cookie-parser';
-import {
-  PostgreSqlContainer,
-  StartedPostgreSqlContainer,
-} from '@testcontainers/postgresql';
+import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
@@ -19,8 +12,11 @@ import { UserResponseDTO } from '@/modules/auth/dto/UserResponseDTO';
 import { AccessTokenResponseDTO } from '@/modules/auth/dto/AccessTokenResponseDTO';
 import { REFRESH_TOKEN_COOKIE } from '@/modules/auth/auth.constants';
 import { UserRole } from '@/entities/user/UserRole';
-import { buildValidationPipe } from '@/common/validation/validation-pipe';
-import jwtConfig from '@/config/jwt.config';
+import {
+  extractRefreshCookie,
+  startTestApp,
+  stopTestApp,
+} from '@test/support/e2e';
 
 describe('AuthController (e2e)', () => {
   let container: StartedPostgreSqlContainer;
@@ -28,36 +24,14 @@ describe('AuthController (e2e)', () => {
   let dataSource: DataSource;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:16').start();
-
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true, load: [jwtConfig] }),
-        TypeOrmModule.forRoot({
-          type: 'postgres',
-          host: container.getHost(),
-          port: container.getPort(),
-          username: container.getUsername(),
-          password: container.getPassword(),
-          database: container.getDatabase(),
-          entities: [UserEntity, RefreshTokenEntity],
-          synchronize: true,
-        }),
-        AuthModule,
-      ],
-    }).compile();
-
-    app = moduleFixture.createNestApplication();
-    app.use(cookieParser());
-    app.useGlobalPipes(buildValidationPipe());
-    await app.init();
-
-    dataSource = moduleFixture.get(DataSource);
+    ({ app, dataSource, container } = await startTestApp({
+      entities: [UserEntity, RefreshTokenEntity],
+      imports: [AuthModule],
+    }));
   });
 
   afterAll(async () => {
-    await app.close();
-    await container.stop();
+    await stopTestApp({ app, dataSource, container });
   });
 
   beforeEach(async () => {
@@ -72,19 +46,6 @@ describe('AuthController (e2e)', () => {
       .post('/auth/register')
       .send(RegisterDTOMother.valid(overrides))
       .expect(201);
-  }
-
-  /** Pulls the raw refresh-token value out of a response's Set-Cookie header. */
-  function extractRefreshCookie(response: request.Response): string {
-    const setCookie = (response.headers['set-cookie'] ??
-      []) as unknown as string[];
-    const cookie = setCookie.find((value) =>
-      value.startsWith(`${REFRESH_TOKEN_COOKIE}=`),
-    );
-    if (!cookie) {
-      throw new Error('refresh token cookie was not set');
-    }
-    return cookie.split(';')[0].split('=')[1];
   }
 
   it('POST /auth/register returns the created user metadata only', async () => {

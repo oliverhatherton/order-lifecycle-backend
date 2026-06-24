@@ -5,6 +5,7 @@ import type { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AppController } from '@/app.controller';
 import { AppService } from '@/app.service';
 import { AuthModule } from '@/modules/auth/auth.module';
+import { OrdersModule } from '@/modules/orders/orders.module';
 import databaseConfig from '@/config/database.config';
 import jwtConfig from '@/config/jwt.config';
 
@@ -20,6 +21,7 @@ import jwtConfig from '@/config/jwt.config';
         configService.get<TypeOrmModuleOptions>('database')!,
     }),
     AuthModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],
