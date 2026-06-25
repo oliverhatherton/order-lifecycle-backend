@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import { AppModule } from '@/app.module';
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
@@ -11,8 +12,26 @@ async function bootstrap() {
   app.useGlobalInterceptors(new LoggingInterceptor());
   app.useGlobalPipes(buildValidationPipe());
 
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Order Lifecycle API')
+    .setDescription(
+      'Identity & access, the order lifecycle (FSM), and event-driven fulfilment.',
+    )
+    .setVersion('1.0')
+    // Access token sent as `Authorization: Bearer <jwt>`.
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+      'access-token',
+    )
+    // Refresh token delivered as an httpOnly cookie.
+    .addCookieAuth('refresh_token')
+    .build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('docs', app, document);
+
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
   Logger.log(`Application listening on port ${port}`, 'Bootstrap');
+  Logger.log(`API docs at http://localhost:${port}/docs`, 'Bootstrap');
 }
 void bootstrap();

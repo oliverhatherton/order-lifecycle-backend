@@ -3,6 +3,7 @@
  * in the body; the refresh token is delivered out-of-band as an httpOnly
  * cookie so it is never exposed to client-side JavaScript.
  */
-export type AccessTokenResponseDTO = {
+export class AccessTokenResponseDTO {
+  /** Short-lived JWT to send as `Authorization: Bearer <token>`. */
   accessToken: string;
-};
+}

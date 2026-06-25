@@ -1,14 +1,24 @@
-import type { OrderStatus } from '@/entities/order/OrderStatus';
+import { ApiProperty } from '@nestjs/swagger';
+import { OrderStatus } from '@/entities/order/OrderStatus';
 import type { OrderEntity } from '@/entities/order/OrderEntity';
 
 /** Public view of an order returned by the orders endpoints. */
-export type OrderResponseDTO = {
+export class OrderResponseDTO {
+  @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty({ format: 'uuid', description: 'Owner of the order.' })
   userId: string;
+
+  @ApiProperty({ enum: OrderStatus, example: OrderStatus.PENDING })
   status: OrderStatus;
+
+  @ApiProperty()
   createdAt: Date;
+
+  @ApiProperty()
   updatedAt: Date;
-};
+}
 
 /** Maps an {@link OrderEntity} to its response shape. */
 export function toOrderResponseDTO(order: OrderEntity): OrderResponseDTO {
