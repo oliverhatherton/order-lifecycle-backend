@@ -1,8 +1,4 @@
-import { INestApplication } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import request from 'supertest';
-import { App } from 'supertest/types';
-import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
@@ -12,44 +8,27 @@ import { UserResponseDTO } from '@/modules/auth/dto/UserResponseDTO';
 import { AccessTokenResponseDTO } from '@/modules/auth/dto/AccessTokenResponseDTO';
 import { REFRESH_TOKEN_COOKIE } from '@/modules/auth/auth.constants';
 import { UserRole } from '@/entities/user/UserRole';
-import {
-  extractRefreshCookie,
-  startTestApp,
-  stopTestApp,
-} from '@test/support/e2e';
+import { extractRefreshCookie, setupE2eTest } from '@test/support/e2e';
 
 describe('AuthController (e2e)', () => {
-  let container: StartedPostgreSqlContainer;
-  let app: INestApplication<App>;
-  let dataSource: DataSource;
-
-  beforeAll(async () => {
-    ({ app, dataSource, container } = await startTestApp({
-      entities: [UserEntity, RefreshTokenEntity],
-      imports: [AuthModule],
-    }));
-  });
-
-  afterAll(async () => {
-    await stopTestApp({ app, dataSource, container });
-  });
-
-  beforeEach(async () => {
-    // Isolate each test; CASCADE clears refresh_tokens (FK -> users) too.
-    await dataSource.query('TRUNCATE TABLE "refresh_tokens", "users" CASCADE');
+  const ctx = setupE2eTest({
+    entities: [UserEntity, RefreshTokenEntity],
+    imports: [AuthModule],
+    // CASCADE clears refresh_tokens (FK -> users) too.
+    truncate: ['refresh_tokens', 'users'],
   });
 
   async function registerUser(
     overrides: Partial<{ email: string; password: string }> = {},
   ): Promise<void> {
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid(overrides))
       .expect(201);
   }
 
   it('POST /auth/register returns the created user metadata only', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid())
       .expect(201);
@@ -64,12 +43,12 @@ describe('AuthController (e2e)', () => {
   });
 
   it('persists the user with a hashed password and default role', async () => {
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid())
       .expect(201);
 
-    const stored = await dataSource
+    const stored = await ctx.dataSource
       .getRepository(UserEntity)
       .findOneByOrFail({ email: 'test@example.com' });
     expect(stored.role).toBe(UserRole.USER);
@@ -77,12 +56,12 @@ describe('AuthController (e2e)', () => {
   });
 
   it('POST /auth/register rejects duplicate emails with 409', async () => {
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid({ email: 'duplicate@example.com' }))
       .expect(201);
 
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(
         RegisterDTOMother.valid({
@@ -94,12 +73,12 @@ describe('AuthController (e2e)', () => {
   });
 
   it('treats emails as unique case-insensitively', async () => {
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid({ email: 'Person@Example.com' }))
       .expect(201);
 
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(
         RegisterDTOMother.valid({
@@ -111,7 +90,7 @@ describe('AuthController (e2e)', () => {
   });
 
   it('stores and returns the email in canonical lowercase form', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid({ email: 'MixedCase@Example.com' }))
       .expect(201);
@@ -119,21 +98,21 @@ describe('AuthController (e2e)', () => {
     const body = response.body as UserResponseDTO;
     expect(body.email).toBe('mixedcase@example.com');
 
-    const stored = await dataSource
+    const stored = await ctx.dataSource
       .getRepository(UserEntity)
       .findOneByOrFail({ email: 'mixedcase@example.com' });
     expect(stored.email).toBe('mixedcase@example.com');
   });
 
   it('POST /auth/register rejects a weak password with 400', async () => {
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid({ password: 'weak' }))
       .expect(400);
   });
 
   it('POST /auth/register rejects an invalid email with 400', async () => {
-    await request(app.getHttpServer())
+    await request(ctx.app.getHttpServer())
       .post('/auth/register')
       .send(RegisterDTOMother.valid({ email: 'not-an-email' }))
       .expect(400);
@@ -143,7 +122,7 @@ describe('AuthController (e2e)', () => {
     it('returns the access token in the body and the refresh token as an httpOnly cookie', async () => {
       await registerUser();
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid())
         .expect(200);
@@ -168,7 +147,7 @@ describe('AuthController (e2e)', () => {
     it('logs in case-insensitively against the registered email', async () => {
       await registerUser({ email: 'Person@Example.com' });
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid({ email: 'PERSON@example.COM' }))
         .expect(200);
@@ -177,13 +156,15 @@ describe('AuthController (e2e)', () => {
     it('stores the refresh token server-side as a hash, not in plaintext', async () => {
       await registerUser();
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid())
         .expect(200);
       const refreshToken = extractRefreshCookie(response);
 
-      const stored = await dataSource.getRepository(RefreshTokenEntity).find();
+      const stored = await ctx.dataSource
+        .getRepository(RefreshTokenEntity)
+        .find();
       expect(stored).toHaveLength(1);
       expect(stored[0].tokenHash).not.toBe(refreshToken);
       expect(stored[0].expiresAt.getTime()).toBeGreaterThan(Date.now());
@@ -192,12 +173,12 @@ describe('AuthController (e2e)', () => {
     it('returns the same generic error for unknown email and wrong password', async () => {
       await registerUser();
 
-      const wrongPassword = await request(app.getHttpServer())
+      const wrongPassword = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid({ password: 'WrongPass123!' }))
         .expect(401);
 
-      const unknownEmail = await request(app.getHttpServer())
+      const unknownEmail = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid({ email: 'nobody@example.com' }))
         .expect(401);
@@ -210,7 +191,7 @@ describe('AuthController (e2e)', () => {
     /** Logs a fresh user in and returns their refresh-token cookie value. */
     async function loginUser(): Promise<string> {
       await registerUser();
-      const login = await request(app.getHttpServer())
+      const login = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid())
         .expect(200);
@@ -218,7 +199,7 @@ describe('AuthController (e2e)', () => {
     }
 
     function refreshWith(token: string): request.Test {
-      return request(app.getHttpServer())
+      return request(ctx.app.getHttpServer())
         .post('/auth/refresh')
         .set('Cookie', `${REFRESH_TOKEN_COOKIE}=${token}`);
     }
@@ -241,7 +222,7 @@ describe('AuthController (e2e)', () => {
       const refreshed = await refreshWith(refreshToken).expect(200);
       const { accessToken } = refreshed.body as AccessTokenResponseDTO;
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get('/auth/me')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
@@ -277,7 +258,7 @@ describe('AuthController (e2e)', () => {
       const refreshToken = await loginUser();
 
       // Force the stored (still-active) token to be expired.
-      await dataSource
+      await ctx.dataSource
         .getRepository(RefreshTokenEntity)
         .update({ revoked: false }, { expiresAt: new Date(Date.now() - 1000) });
 
@@ -285,20 +266,20 @@ describe('AuthController (e2e)', () => {
     });
 
     it('rejects a request with no refresh-token cookie with 401', async () => {
-      await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+      await request(ctx.app.getHttpServer()).post('/auth/refresh').expect(401);
     });
   });
 
   describe('GET /auth/me (protected)', () => {
     it('accepts a valid access token and returns the user identity', async () => {
       await registerUser();
-      const login = await request(app.getHttpServer())
+      const login = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid())
         .expect(200);
       const { accessToken } = login.body as AccessTokenResponseDTO;
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .get('/auth/me')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
@@ -308,11 +289,11 @@ describe('AuthController (e2e)', () => {
     });
 
     it('rejects a request with no token', async () => {
-      await request(app.getHttpServer()).get('/auth/me').expect(401);
+      await request(ctx.app.getHttpServer()).get('/auth/me').expect(401);
     });
 
     it('rejects a request with a malformed token', async () => {
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get('/auth/me')
         .set('Authorization', 'Bearer not-a-real-jwt')
         .expect(401);
@@ -329,7 +310,7 @@ describe('AuthController (e2e)', () => {
       password: string;
     }): Promise<string> {
       await registerUser(credentials);
-      const login = await request(app.getHttpServer())
+      const login = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid(credentials))
         .expect(200);
@@ -339,10 +320,10 @@ describe('AuthController (e2e)', () => {
     /** Registers an admin (promoted directly in the DB) and returns its token. */
     async function loginAsAdmin(): Promise<string> {
       await registerUser(ADMIN);
-      await dataSource
+      await ctx.dataSource
         .getRepository(UserEntity)
         .update({ email: ADMIN.email }, { role: UserRole.ADMIN });
-      const login = await request(app.getHttpServer())
+      const login = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid(ADMIN))
         .expect(200);
@@ -350,7 +331,7 @@ describe('AuthController (e2e)', () => {
     }
 
     async function userIdByEmail(email: string): Promise<string> {
-      const user = await dataSource
+      const user = await ctx.dataSource
         .getRepository(UserEntity)
         .findOneByOrFail({ email });
       return user.id;
@@ -360,7 +341,7 @@ describe('AuthController (e2e)', () => {
       const adminToken = await loginAsAdmin();
       await registerAndLogin(MEMBER);
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .get('/admin/users')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -377,14 +358,14 @@ describe('AuthController (e2e)', () => {
     it('rejects a USER from the admin list with 403', async () => {
       const memberToken = await registerAndLogin(MEMBER);
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get('/admin/users')
         .set('Authorization', `Bearer ${memberToken}`)
         .expect(403);
     });
 
     it('rejects an anonymous request to the admin list with 401', async () => {
-      await request(app.getHttpServer()).get('/admin/users').expect(401);
+      await request(ctx.app.getHttpServer()).get('/admin/users').expect(401);
     });
 
     it('rejects a USER attempting to disable another user with 403', async () => {
@@ -392,7 +373,7 @@ describe('AuthController (e2e)', () => {
       await registerUser(ADMIN);
       const targetId = await userIdByEmail(ADMIN.email);
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .patch(`/admin/users/${targetId}/disable`)
         .set('Authorization', `Bearer ${memberToken}`)
         .expect(403);
@@ -401,7 +382,7 @@ describe('AuthController (e2e)', () => {
     it('returns 404 when disabling an unknown user', async () => {
       const adminToken = await loginAsAdmin();
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .patch('/admin/users/00000000-0000-0000-0000-000000000000/disable')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(404);
@@ -410,7 +391,7 @@ describe('AuthController (e2e)', () => {
     it('returns 400 for a malformed user id', async () => {
       const adminToken = await loginAsAdmin();
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .patch('/admin/users/not-a-uuid/disable')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(400);
@@ -421,7 +402,7 @@ describe('AuthController (e2e)', () => {
 
       // The member logs in and obtains a refresh cookie.
       await registerUser(MEMBER);
-      const memberLogin = await request(app.getHttpServer())
+      const memberLogin = await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid(MEMBER))
         .expect(200);
@@ -429,30 +410,30 @@ describe('AuthController (e2e)', () => {
       const memberId = await userIdByEmail(MEMBER.email);
 
       // Admin disables the member.
-      const disabled = await request(app.getHttpServer())
+      const disabled = await request(ctx.app.getHttpServer())
         .patch(`/admin/users/${memberId}/disable`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       expect((disabled.body as { disabled: boolean }).disabled).toBe(true);
 
       // The disabled member can neither log in nor refresh.
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid(MEMBER))
         .expect(401);
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .post('/auth/refresh')
         .set('Cookie', `${REFRESH_TOKEN_COOKIE}=${refreshToken}`)
         .expect(401);
 
       // Re-enabling restores access.
-      const enabled = await request(app.getHttpServer())
+      const enabled = await request(ctx.app.getHttpServer())
         .patch(`/admin/users/${memberId}/enable`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       expect((enabled.body as { disabled: boolean }).disabled).toBe(false);
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .post('/auth/login')
         .send(LoginDTOMother.valid(MEMBER))
         .expect(200);

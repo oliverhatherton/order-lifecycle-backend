@@ -1,8 +1,4 @@
-import { INestApplication } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import request from 'supertest';
-import { App } from 'supertest/types';
-import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { UserEntity } from '@/entities/user/UserEntity';
@@ -10,35 +6,20 @@ import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity'
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
-import { registerAndLogin, startTestApp, stopTestApp } from '@test/support/e2e';
+import { registerAndLogin, setupE2eTest } from '@test/support/e2e';
 
 describe('OrdersController (e2e)', () => {
-  let container: StartedPostgreSqlContainer;
-  let app: INestApplication<App>;
-  let dataSource: DataSource;
-
-  beforeAll(async () => {
-    ({ app, dataSource, container } = await startTestApp({
-      entities: [UserEntity, RefreshTokenEntity, OrderEntity],
-      imports: [AuthModule, OrdersModule],
-    }));
-  });
-
-  afterAll(async () => {
-    await stopTestApp({ app, dataSource, container });
-  });
-
-  beforeEach(async () => {
-    await dataSource.query(
-      'TRUNCATE TABLE "orders", "refresh_tokens", "users" CASCADE',
-    );
+  const ctx = setupE2eTest({
+    entities: [UserEntity, RefreshTokenEntity, OrderEntity],
+    imports: [AuthModule, OrdersModule],
+    truncate: ['orders', 'refresh_tokens', 'users'],
   });
 
   describe('POST /orders', () => {
     it('creates a PENDING order owned by the authenticated caller', async () => {
-      const token = await registerAndLogin(app);
+      const token = await registerAndLogin(ctx.app);
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .post('/orders')
         .set('Authorization', `Bearer ${token}`)
         .expect(201);
@@ -51,30 +32,32 @@ describe('OrdersController (e2e)', () => {
     });
 
     it('rejects an anonymous request with 401', async () => {
-      await request(app.getHttpServer()).post('/orders').expect(401);
+      await request(ctx.app.getHttpServer()).post('/orders').expect(401);
     });
   });
 
   describe('GET /orders', () => {
     async function createOrder(token: string): Promise<void> {
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .post('/orders')
         .set('Authorization', `Bearer ${token}`)
         .expect(201);
     }
 
     it("returns only the caller's own orders, partitioned by user", async () => {
-      const alice = await registerAndLogin(app, { email: 'alice@example.com' });
-      const bob = await registerAndLogin(app, { email: 'bob@example.com' });
+      const alice = await registerAndLogin(ctx.app, {
+        email: 'alice@example.com',
+      });
+      const bob = await registerAndLogin(ctx.app, { email: 'bob@example.com' });
       await createOrder(alice);
       await createOrder(alice);
       await createOrder(bob);
 
-      const aliceOrders = await request(app.getHttpServer())
+      const aliceOrders = await request(ctx.app.getHttpServer())
         .get('/orders')
         .set('Authorization', `Bearer ${alice}`)
         .expect(200);
-      const bobOrders = await request(app.getHttpServer())
+      const bobOrders = await request(ctx.app.getHttpServer())
         .get('/orders')
         .set('Authorization', `Bearer ${bob}`)
         .expect(200);
@@ -90,9 +73,9 @@ describe('OrdersController (e2e)', () => {
     });
 
     it('returns an empty list for a user with no orders', async () => {
-      const token = await registerAndLogin(app);
+      const token = await registerAndLogin(ctx.app);
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .get('/orders')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -101,20 +84,20 @@ describe('OrdersController (e2e)', () => {
     });
 
     it('rejects an anonymous request with 401', async () => {
-      await request(app.getHttpServer()).get('/orders').expect(401);
+      await request(ctx.app.getHttpServer()).get('/orders').expect(401);
     });
   });
 
   describe('GET /orders/:id', () => {
     it('returns an order the caller owns', async () => {
-      const token = await registerAndLogin(app);
-      const created = await request(app.getHttpServer())
+      const token = await registerAndLogin(ctx.app);
+      const created = await request(ctx.app.getHttpServer())
         .post('/orders')
         .set('Authorization', `Bearer ${token}`)
         .expect(201);
       const { id } = created.body as OrderResponseDTO;
 
-      const response = await request(app.getHttpServer())
+      const response = await request(ctx.app.getHttpServer())
         .get(`/orders/${id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
@@ -123,44 +106,44 @@ describe('OrdersController (e2e)', () => {
     });
 
     it("returns 404 for another user's order (existence hidden)", async () => {
-      const ownerToken = await registerAndLogin(app, {
+      const ownerToken = await registerAndLogin(ctx.app, {
         email: 'owner@example.com',
       });
-      const created = await request(app.getHttpServer())
+      const created = await request(ctx.app.getHttpServer())
         .post('/orders')
         .set('Authorization', `Bearer ${ownerToken}`)
         .expect(201);
       const { id } = created.body as OrderResponseDTO;
 
-      const otherToken = await registerAndLogin(app, {
+      const otherToken = await registerAndLogin(ctx.app, {
         email: 'other@example.com',
       });
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get(`/orders/${id}`)
         .set('Authorization', `Bearer ${otherToken}`)
         .expect(404);
     });
 
     it('returns 404 for an unknown order id', async () => {
-      const token = await registerAndLogin(app);
+      const token = await registerAndLogin(ctx.app);
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get('/orders/00000000-0000-0000-0000-000000000000')
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
     });
 
     it('returns 400 for a malformed order id', async () => {
-      const token = await registerAndLogin(app);
+      const token = await registerAndLogin(ctx.app);
 
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get('/orders/not-a-uuid')
         .set('Authorization', `Bearer ${token}`)
         .expect(400);
     });
 
     it('rejects an anonymous request with 401', async () => {
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .get('/orders/00000000-0000-0000-0000-000000000000')
         .expect(401);
     });
@@ -168,8 +151,8 @@ describe('OrdersController (e2e)', () => {
 
   describe('order state machine (no arbitrary status mutation)', () => {
     it('exposes no HTTP route to set an order status directly', async () => {
-      const token = await registerAndLogin(app);
-      const created = await request(app.getHttpServer())
+      const token = await registerAndLogin(ctx.app);
+      const created = await request(ctx.app.getHttpServer())
         .post('/orders')
         .set('Authorization', `Bearer ${token}`)
         .expect(201);
@@ -177,12 +160,12 @@ describe('OrdersController (e2e)', () => {
 
       // There is deliberately no status-mutation endpoint; these routes do not
       // exist, so the FSM cannot be bypassed over HTTP.
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .patch(`/orders/${id}`)
         .set('Authorization', `Bearer ${token}`)
         .send({ status: OrderStatus.PAID })
         .expect(404);
-      await request(app.getHttpServer())
+      await request(ctx.app.getHttpServer())
         .put(`/orders/${id}`)
         .set('Authorization', `Bearer ${token}`)
         .send({ status: OrderStatus.COMPLETED })

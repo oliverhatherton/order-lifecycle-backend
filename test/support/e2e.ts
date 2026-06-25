@@ -72,6 +72,58 @@ export async function stopTestApp(testApp: TestApp): Promise<void> {
   await testApp.container.stop();
 }
 
+export interface E2eContext {
+  readonly app: INestApplication<App>;
+  readonly dataSource: DataSource;
+}
+
+export interface SetupE2eTestOptions extends StartTestAppOptions {
+  /** Tables truncated (CASCADE) before each test to isolate cases. */
+  truncate?: string[];
+}
+
+/**
+ * Registers the whole e2e lifecycle for a describe block: boots a
+ * containerized app in `beforeAll`, tears it down in `afterAll`, and truncates
+ * the given tables before each test. Returns a context whose `app`/`dataSource`
+ * are live by the time the tests run, so a suite never repeats the bootstrap.
+ *
+ * Call it once at the top of a `describe`:
+ *
+ *   const ctx = setupE2eTest({ entities: [...], imports: [...], truncate: [...] });
+ *   // then use ctx.app / ctx.dataSource inside the tests
+ */
+export function setupE2eTest(options: SetupE2eTestOptions): E2eContext {
+  let testApp: TestApp;
+
+  beforeAll(async () => {
+    testApp = await startTestApp(options);
+  });
+
+  afterAll(async () => {
+    await stopTestApp(testApp);
+  });
+
+  const tables = options.truncate ?? [];
+  if (tables.length > 0) {
+    const truncateSql = `TRUNCATE TABLE ${tables
+      .map((table) => `"${table}"`)
+      .join(', ')} CASCADE`;
+    beforeEach(async () => {
+      await testApp.dataSource.query(truncateSql);
+    });
+  }
+
+  return {
+    get app() {
+      return testApp.app;
+    },
+    get dataSource() {
+      return testApp.dataSource;
+    },
+  };
+}
+
 /** Registers a user and logs them in, returning the access token. */
 export async function registerAndLogin(
   app: INestApplication<App>,
