@@ -1,31 +1,38 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { RabbitMQModule } from '@golevelup/nestjs-rabbitmq';
+import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { InboxService } from '@/modules/messaging/inbox/inbox.service';
+import {
+  ORDER_DLX,
+  ORDER_EXCHANGE,
+} from '@/modules/messaging/events/order-events';
 
 /**
  * Owns the RabbitMQ connection and declares the lifecycle topology on boot: the
- * topic exchange that carries order events plus a dead-letter exchange that
- * poison messages are routed to (per-queue dead-lettering + retry land with the
- * consumers in later stories). Re-exports RabbitMQModule so feature modules can
- * inject AmqpConnection to publish or subscribe.
+ * order topic exchange plus a dead-letter exchange for poison messages. Exposes
+ * the EventPublisher (publish) and InboxService (consumer idempotency) to the
+ * feature modules, and re-exports RabbitMQModule so they can declare
+ * @RabbitSubscribe consumers.
  */
 @Module({
   imports: [
+    TypeOrmModule.forFeature([ProcessedMessageEntity]),
     RabbitMQModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const exchange = configService.getOrThrow<string>('rabbitmq.exchange');
-        return {
-          uri: configService.getOrThrow<string>('rabbitmq.uri'),
-          exchanges: [
-            { name: exchange, type: 'topic' },
-            { name: `${exchange}.dlx`, type: 'topic' },
-          ],
-          connectionInitOptions: { wait: true, timeout: 20000 },
-        };
-      },
+      useFactory: (configService: ConfigService) => ({
+        uri: configService.getOrThrow<string>('rabbitmq.uri'),
+        exchanges: [
+          { name: ORDER_EXCHANGE, type: 'topic' },
+          { name: ORDER_DLX, type: 'topic' },
+        ],
+        connectionInitOptions: { wait: true, timeout: 20000 },
+      }),
     }),
   ],
-  exports: [RabbitMQModule],
+  providers: [EventPublisher, InboxService],
+  exports: [RabbitMQModule, EventPublisher, InboxService],
 })
 export class MessagingModule {}

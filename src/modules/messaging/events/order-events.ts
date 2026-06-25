@@ -1,6 +1,10 @@
+/** Topic exchange carrying the order lifecycle events, and its dead-letter pair. */
+export const ORDER_EXCHANGE = 'order_lifecycle';
+export const ORDER_DLX = 'order_lifecycle.dlx';
+
 /**
- * Topic-exchange routing keys for the order lifecycle events. Consumers bind
- * their queues to these keys on the `rabbitmq.exchange` exchange.
+ * Routing keys for the order lifecycle events. Consumers bind their queues to
+ * these keys on {@link ORDER_EXCHANGE}.
  */
 export const OrderRoutingKey = {
   Created: 'order.created',
@@ -15,5 +19,12 @@ export interface OrderCreatedEvent {
   orderId: string;
   userId: string;
   /** ISO-8601 timestamp of when the order was created. */
+  occurredAt: string;
+}
+
+/** Published when inventory has been reserved for an order (now RESERVED). */
+export interface InventoryReservedEvent {
+  orderId: string;
+  userId: string;
   occurredAt: string;
 }

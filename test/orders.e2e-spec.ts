@@ -1,5 +1,4 @@
 import request from 'supertest';
-import { ConfigService } from '@nestjs/config';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
@@ -7,8 +6,10 @@ import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
+import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
+  ORDER_EXCHANGE,
   OrderCreatedEvent,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
@@ -16,9 +17,14 @@ import { registerAndLogin, setupE2eTest } from '@test/support/e2e';
 
 describe('OrdersController (e2e)', () => {
   const ctx = setupE2eTest({
-    entities: [UserEntity, RefreshTokenEntity, OrderEntity],
+    entities: [
+      UserEntity,
+      RefreshTokenEntity,
+      OrderEntity,
+      ProcessedMessageEntity,
+    ],
     imports: [AuthModule, OrdersModule],
-    truncate: ['orders', 'refresh_tokens', 'users'],
+    truncate: ['processed_messages', 'orders', 'refresh_tokens', 'users'],
     rabbitmq: true,
   });
 
@@ -44,9 +50,6 @@ describe('OrdersController (e2e)', () => {
 
     it('publishes a typed OrderCreated event to the exchange', async () => {
       const amqp = ctx.app.get(AmqpConnection);
-      const exchange = ctx.app
-        .get(ConfigService)
-        .getOrThrow<string>('rabbitmq.exchange');
 
       // Bind a throwaway queue to the order-created routing key and capture the
       // first message that lands.
@@ -54,7 +57,11 @@ describe('OrdersController (e2e)', () => {
         exclusive: true,
         autoDelete: true,
       });
-      await amqp.channel.bindQueue(queue, exchange, OrderRoutingKey.Created);
+      await amqp.channel.bindQueue(
+        queue,
+        ORDER_EXCHANGE,
+        OrderRoutingKey.Created,
+      );
       const received = new Promise<OrderCreatedEvent>((resolve) => {
         void amqp.channel.consume(
           queue,

@@ -2,7 +2,8 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { OrdersService } from '@/modules/orders/services/orders.service';
-import { OrderEventsPublisher } from '@/modules/orders/services/order-events.publisher';
+import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OrderRoutingKey } from '@/modules/messaging/events/order-events';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { OrderEntityMother } from '@/entities/order/mother/OrderEntityMother';
@@ -18,7 +19,7 @@ describe('OrdersService', () => {
   };
 
   const publisherMock = {
-    publishOrderCreated: jest.fn(),
+    publish: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -30,7 +31,7 @@ describe('OrdersService', () => {
           useValue: repositoryMock,
         },
         {
-          provide: OrderEventsPublisher,
+          provide: EventPublisher,
           useValue: publisherMock,
         },
       ],
@@ -48,13 +49,16 @@ describe('OrdersService', () => {
       const created = OrderEntityMother.create({ userId: 'user-1' });
       repositoryMock.create.mockReturnValue(created);
       repositoryMock.save.mockResolvedValue(created);
-      publisherMock.publishOrderCreated.mockResolvedValue(undefined);
+      publisherMock.publish.mockResolvedValue(undefined);
 
       const result = await service.createOrder('user-1');
 
       expect(repositoryMock.create).toHaveBeenCalledWith({ userId: 'user-1' });
       expect(repositoryMock.save).toHaveBeenCalledWith(created);
-      expect(publisherMock.publishOrderCreated).toHaveBeenCalledWith(created);
+      expect(publisherMock.publish).toHaveBeenCalledWith(
+        OrderRoutingKey.Created,
+        expect.objectContaining({ orderId: created.id, userId: 'user-1' }),
+      );
       expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.userId).toBe('user-1');
     });
@@ -63,9 +67,7 @@ describe('OrdersService', () => {
       const created = OrderEntityMother.create({ userId: 'user-1' });
       repositoryMock.create.mockReturnValue(created);
       repositoryMock.save.mockResolvedValue(created);
-      publisherMock.publishOrderCreated.mockRejectedValue(
-        new Error('broker down'),
-      );
+      publisherMock.publish.mockRejectedValue(new Error('broker down'));
 
       const result = await service.createOrder('user-1');
 

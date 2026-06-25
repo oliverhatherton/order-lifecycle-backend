@@ -5,11 +5,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { isTransitionAllowed } from '@/modules/orders/order-state-machine';
-import { OrderEventsPublisher } from '@/modules/orders/services/order-events.publisher';
+import { EventPublisher } from '@/modules/messaging/event-publisher';
+import {
+  OrderCreatedEvent,
+  OrderRoutingKey,
+} from '@/modules/messaging/events/order-events';
 
 @Injectable()
 export class OrdersService {
@@ -18,7 +22,7 @@ export class OrdersService {
   constructor(
     @InjectRepository(OrderEntity)
     private readonly orderRepository: Repository<OrderEntity>,
-    private readonly orderEventsPublisher: OrderEventsPublisher,
+    private readonly eventPublisher: EventPublisher,
   ) {}
 
   /** Creates a new PENDING order owned by the given user and announces it. */
@@ -31,8 +35,13 @@ export class OrdersService {
     // Publish-after-commit: the order is durably saved before we announce it.
     // If the broker is unavailable we log rather than fail the request (no
     // outbox yet); the order still exists and can be reconciled.
+    const event: OrderCreatedEvent = {
+      orderId: order.id,
+      userId: order.userId,
+      occurredAt: order.createdAt.toISOString(),
+    };
     try {
-      await this.orderEventsPublisher.publishOrderCreated(order);
+      await this.eventPublisher.publish(OrderRoutingKey.Created, event);
     } catch (error) {
       this.logger.error(
         `Failed to publish OrderCreated for order ${order.id}`,
@@ -67,13 +76,19 @@ export class OrdersService {
    * Advances an order to a new status if the order state machine permits the
    * transition, persisting the change. Illegal transitions are rejected and the
    * order is left untouched. System-level (not user-scoped) — Epic 3's events
-   * drive it by order id.
+   * drive it by order id. Pass a transaction `manager` to run the transition
+   * inside a consumer's idempotent transaction (see InboxService).
    */
   async transitionOrder(
     orderId: string,
     to: OrderStatus,
+    manager?: EntityManager,
   ): Promise<OrderEntity> {
-    const order = await this.orderRepository.findOneBy({ id: orderId });
+    const repository = manager
+      ? manager.getRepository(OrderEntity)
+      : this.orderRepository;
+
+    const order = await repository.findOneBy({ id: orderId });
     if (!order) {
       throw new NotFoundException('Order not found');
     }
@@ -84,7 +99,7 @@ export class OrdersService {
     }
 
     order.status = to;
-    const saved = await this.orderRepository.save(order);
+    const saved = await repository.save(order);
     this.logger.log(`Order ${orderId} transitioned ${from} -> ${to}`);
     return saved;
   }

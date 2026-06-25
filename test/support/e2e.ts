@@ -164,6 +164,24 @@ export async function registerAndLogin(
   return (login.body as AccessTokenResponseDTO).accessToken;
 }
 
+/** Polls `predicate` until it is true or the timeout elapses (for async flows). */
+export async function waitFor(
+  predicate: () => Promise<boolean> | boolean,
+  {
+    timeoutMs = 10000,
+    intervalMs = 50,
+  }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('waitFor: condition not met within timeout');
+}
+
 /** Pulls the raw refresh-token value out of a response's Set-Cookie header. */
 export function extractRefreshCookie(response: request.Response): string {
   const setCookie = (response.headers['set-cookie'] ??
