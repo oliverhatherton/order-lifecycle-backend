@@ -8,12 +8,13 @@ import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import databaseConfig from '@/config/database.config';
 import jwtConfig from '@/config/jwt.config';
+import rabbitmqConfig from '@/config/rabbitmq.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [databaseConfig, jwtConfig],
+      load: [databaseConfig, jwtConfig, rabbitmqConfig],
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
