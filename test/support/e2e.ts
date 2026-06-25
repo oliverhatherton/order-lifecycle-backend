@@ -1,5 +1,5 @@
 import { INestApplication, ModuleMetadata } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigFactory } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { EntityClassOrSchema } from '@nestjs/typeorm/dist/interfaces/entity-class-or-schema.type';
@@ -11,17 +11,23 @@ import {
   PostgreSqlContainer,
   StartedPostgreSqlContainer,
 } from '@testcontainers/postgresql';
+import {
+  RabbitMQContainer,
+  StartedRabbitMQContainer,
+} from '@testcontainers/rabbitmq';
 import { buildValidationPipe } from '@/common/validation/validation-pipe';
 import { RegisterDTOMother } from '@/modules/auth/dto/RegisterDTOMother';
 import { LoginDTOMother } from '@/modules/auth/dto/LoginDTOMother';
 import { AccessTokenResponseDTO } from '@/modules/auth/dto/AccessTokenResponseDTO';
 import { REFRESH_TOKEN_COOKIE } from '@/modules/auth/auth.constants';
 import jwtConfig from '@/config/jwt.config';
+import rabbitmqConfig from '@/config/rabbitmq.config';
 
 export interface TestApp {
   app: INestApplication<App>;
   dataSource: DataSource;
   container: StartedPostgreSqlContainer;
+  rabbitContainer?: StartedRabbitMQContainer;
 }
 
 export interface StartTestAppOptions {
@@ -29,21 +35,33 @@ export interface StartTestAppOptions {
   entities: EntityClassOrSchema[];
   /** Feature modules under test (e.g. AuthModule, OrdersModule). */
   imports: NonNullable<ModuleMetadata['imports']>;
+  /** Start a RabbitMQ container and point the messaging config at it. */
+  rabbitmq?: boolean;
 }
 
 /**
- * Boots a real Nest app backed by a fresh Postgres testcontainer, wired the
- * same way as production (cookie-parser + the global ValidationPipe). Shared by
- * every e2e suite so the bootstrap lives in one place.
+ * Boots a real Nest app backed by a fresh Postgres testcontainer (and, when
+ * `rabbitmq` is set, a RabbitMQ one), wired the same way as production
+ * (cookie-parser + the global ValidationPipe). Shared by every e2e suite so the
+ * bootstrap lives in one place.
  */
 export async function startTestApp(
   options: StartTestAppOptions,
 ): Promise<TestApp> {
   const container = await new PostgreSqlContainer('postgres:16').start();
 
+  const load: ConfigFactory[] = [jwtConfig];
+  let rabbitContainer: StartedRabbitMQContainer | undefined;
+  if (options.rabbitmq) {
+    rabbitContainer = await new RabbitMQContainer('rabbitmq:4').start();
+    // rabbitmqConfig reads this at factory time.
+    process.env.RABBITMQ_URL = rabbitContainer.getAmqpUrl();
+    load.push(rabbitmqConfig);
+  }
+
   const moduleFixture = await Test.createTestingModule({
     imports: [
-      ConfigModule.forRoot({ isGlobal: true, load: [jwtConfig] }),
+      ConfigModule.forRoot({ isGlobal: true, load }),
       TypeOrmModule.forRoot({
         type: 'postgres',
         host: container.getHost(),
@@ -63,13 +81,19 @@ export async function startTestApp(
   app.useGlobalPipes(buildValidationPipe());
   await app.init();
 
-  return { app, dataSource: moduleFixture.get(DataSource), container };
+  return {
+    app,
+    dataSource: moduleFixture.get(DataSource),
+    container,
+    rabbitContainer,
+  };
 }
 
-/** Tears down the app and its container. */
-export async function stopTestApp(testApp: TestApp): Promise<void> {
-  await testApp.app.close();
-  await testApp.container.stop();
+/** Tears down the app and its container(s); null-safe if startup failed. */
+export async function stopTestApp(testApp?: TestApp): Promise<void> {
+  await testApp?.app.close();
+  await testApp?.container.stop();
+  await testApp?.rabbitContainer?.stop();
 }
 
 export interface E2eContext {

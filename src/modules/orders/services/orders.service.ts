@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { isTransitionAllowed } from '@/modules/orders/order-state-machine';
+import { OrderEventsPublisher } from '@/modules/orders/services/order-events.publisher';
 
 @Injectable()
 export class OrdersService {
@@ -17,14 +18,28 @@ export class OrdersService {
   constructor(
     @InjectRepository(OrderEntity)
     private readonly orderRepository: Repository<OrderEntity>,
+    private readonly orderEventsPublisher: OrderEventsPublisher,
   ) {}
 
-  /** Creates a new PENDING order owned by the given user. */
+  /** Creates a new PENDING order owned by the given user and announces it. */
   async createOrder(userId: string): Promise<OrderEntity> {
     const order = await this.orderRepository.save(
       this.orderRepository.create({ userId }),
     );
     this.logger.log(`Created order ${order.id} for user ${userId}`);
+
+    // Publish-after-commit: the order is durably saved before we announce it.
+    // If the broker is unavailable we log rather than fail the request (no
+    // outbox yet); the order still exists and can be reconciled.
+    try {
+      await this.orderEventsPublisher.publishOrderCreated(order);
+    } catch (error) {
+      this.logger.error(
+        `Failed to publish OrderCreated for order ${order.id}`,
+        error as Error,
+      );
+    }
+
     return order;
   }
 

@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { OrdersService } from '@/modules/orders/services/orders.service';
+import { OrderEventsPublisher } from '@/modules/orders/services/order-events.publisher';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { OrderEntityMother } from '@/entities/order/mother/OrderEntityMother';
@@ -16,6 +17,10 @@ describe('OrdersService', () => {
     find: jest.fn(),
   };
 
+  const publisherMock = {
+    publishOrderCreated: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -23,6 +28,10 @@ describe('OrdersService', () => {
         {
           provide: getRepositoryToken(OrderEntity),
           useValue: repositoryMock,
+        },
+        {
+          provide: OrderEventsPublisher,
+          useValue: publisherMock,
         },
       ],
     }).compile();
@@ -35,17 +44,32 @@ describe('OrdersService', () => {
   });
 
   describe('createOrder', () => {
-    it('creates and persists a PENDING order owned by the user', async () => {
+    it('creates, persists, and announces a PENDING order owned by the user', async () => {
       const created = OrderEntityMother.create({ userId: 'user-1' });
       repositoryMock.create.mockReturnValue(created);
       repositoryMock.save.mockResolvedValue(created);
+      publisherMock.publishOrderCreated.mockResolvedValue(undefined);
 
       const result = await service.createOrder('user-1');
 
       expect(repositoryMock.create).toHaveBeenCalledWith({ userId: 'user-1' });
       expect(repositoryMock.save).toHaveBeenCalledWith(created);
+      expect(publisherMock.publishOrderCreated).toHaveBeenCalledWith(created);
       expect(result.status).toBe(OrderStatus.PENDING);
       expect(result.userId).toBe('user-1');
+    });
+
+    it('still returns the saved order if publishing fails (publish-after-commit)', async () => {
+      const created = OrderEntityMother.create({ userId: 'user-1' });
+      repositoryMock.create.mockReturnValue(created);
+      repositoryMock.save.mockResolvedValue(created);
+      publisherMock.publishOrderCreated.mockRejectedValue(
+        new Error('broker down'),
+      );
+
+      const result = await service.createOrder('user-1');
+
+      expect(result).toBe(created);
     });
   });
 

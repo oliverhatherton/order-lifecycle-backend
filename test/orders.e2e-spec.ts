@@ -1,4 +1,6 @@
 import request from 'supertest';
+import { ConfigService } from '@nestjs/config';
+import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { UserEntity } from '@/entities/user/UserEntity';
@@ -6,6 +8,10 @@ import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity'
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
+import {
+  OrderCreatedEvent,
+  OrderRoutingKey,
+} from '@/modules/messaging/events/order-events';
 import { registerAndLogin, setupE2eTest } from '@test/support/e2e';
 
 describe('OrdersController (e2e)', () => {
@@ -13,6 +19,7 @@ describe('OrdersController (e2e)', () => {
     entities: [UserEntity, RefreshTokenEntity, OrderEntity],
     imports: [AuthModule, OrdersModule],
     truncate: ['orders', 'refresh_tokens', 'users'],
+    rabbitmq: true,
   });
 
   describe('POST /orders', () => {
@@ -33,6 +40,44 @@ describe('OrdersController (e2e)', () => {
 
     it('rejects an anonymous request with 401', async () => {
       await request(ctx.app.getHttpServer()).post('/orders').expect(401);
+    });
+
+    it('publishes a typed OrderCreated event to the exchange', async () => {
+      const amqp = ctx.app.get(AmqpConnection);
+      const exchange = ctx.app
+        .get(ConfigService)
+        .getOrThrow<string>('rabbitmq.exchange');
+
+      // Bind a throwaway queue to the order-created routing key and capture the
+      // first message that lands.
+      const { queue } = await amqp.channel.assertQueue('', {
+        exclusive: true,
+        autoDelete: true,
+      });
+      await amqp.channel.bindQueue(queue, exchange, OrderRoutingKey.Created);
+      const received = new Promise<OrderCreatedEvent>((resolve) => {
+        void amqp.channel.consume(
+          queue,
+          (msg) => {
+            if (msg) {
+              resolve(JSON.parse(msg.content.toString()) as OrderCreatedEvent);
+            }
+          },
+          { noAck: true },
+        );
+      });
+
+      const token = await registerAndLogin(ctx.app);
+      const created = await request(ctx.app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const { id, userId } = created.body as OrderResponseDTO;
+
+      const event = await received;
+      expect(event.orderId).toBe(id);
+      expect(event.userId).toBe(userId);
+      expect(typeof event.occurredAt).toBe('string');
     });
   });
 
