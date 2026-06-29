@@ -1,4 +1,8 @@
-import { INestApplication, ModuleMetadata } from '@nestjs/common';
+import {
+  INestApplication,
+  InjectionToken,
+  ModuleMetadata,
+} from '@nestjs/common';
 import { ConfigModule, ConfigFactory } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -37,6 +41,8 @@ export interface StartTestAppOptions {
   imports: NonNullable<ModuleMetadata['imports']>;
   /** Start a RabbitMQ container and point the messaging config at it. */
   rabbitmq?: boolean;
+  /** Replace providers with test doubles (e.g. force a payment outcome). */
+  overrides?: Array<{ provide: InjectionToken; useValue: unknown }>;
 }
 
 /**
@@ -59,7 +65,7 @@ export async function startTestApp(
     load.push(rabbitmqConfig);
   }
 
-  const moduleFixture = await Test.createTestingModule({
+  let builder = Test.createTestingModule({
     imports: [
       ConfigModule.forRoot({ isGlobal: true, load }),
       TypeOrmModule.forRoot({
@@ -74,7 +80,13 @@ export async function startTestApp(
       }),
       ...options.imports,
     ],
-  }).compile();
+  });
+  for (const override of options.overrides ?? []) {
+    builder = builder
+      .overrideProvider(override.provide)
+      .useValue(override.useValue);
+  }
+  const moduleFixture = await builder.compile();
 
   const app: INestApplication<App> = moduleFixture.createNestApplication();
   app.use(cookieParser());

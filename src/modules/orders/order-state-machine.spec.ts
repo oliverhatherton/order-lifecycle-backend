@@ -9,7 +9,7 @@ describe('order state machine', () => {
   // implementation so the test pins the intended behaviour.
   const expectedAllowed: Record<OrderStatus, OrderStatus[]> = {
     [OrderStatus.PENDING]: [OrderStatus.RESERVED, OrderStatus.FAILED],
-    [OrderStatus.RESERVED]: [OrderStatus.PAID],
+    [OrderStatus.RESERVED]: [OrderStatus.PAID, OrderStatus.FAILED],
     [OrderStatus.PAID]: [OrderStatus.COMPLETED],
     [OrderStatus.COMPLETED]: [],
     [OrderStatus.FAILED]: [],

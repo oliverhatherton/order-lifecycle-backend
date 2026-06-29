@@ -28,3 +28,19 @@ export interface InventoryReservedEvent {
   userId: string;
   occurredAt: string;
 }
+
+/** Published when payment has succeeded for an order (now PAID). */
+export interface PaymentProcessedEvent {
+  orderId: string;
+  userId: string;
+  occurredAt: string;
+}
+
+/** Published when an order has failed (now FAILED). */
+export interface OrderFailedEvent {
+  orderId: string;
+  userId: string;
+  /** Short machine-readable reason, e.g. `payment_declined`. */
+  reason: string;
+  occurredAt: string;
+}
