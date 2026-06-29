@@ -8,6 +8,8 @@ import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { InventoryModule } from '@/modules/inventory/inventory.module';
 import { PaymentModule } from '@/modules/payment/payment.module';
+import { CompletionModule } from '@/modules/completion/completion.module';
+import { EmailModule } from '@/modules/email/email.module';
 import databaseConfig from '@/config/database.config';
 import jwtConfig from '@/config/jwt.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
@@ -27,6 +29,8 @@ import rabbitmqConfig from '@/config/rabbitmq.config';
     OrdersModule,
     InventoryModule,
     PaymentModule,
+    CompletionModule,
+    EmailModule,
   ],
   controllers: [AppController],
   providers: [AppService],

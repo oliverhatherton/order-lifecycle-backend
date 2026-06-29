@@ -36,6 +36,13 @@ export interface PaymentProcessedEvent {
   occurredAt: string;
 }
 
+/** Published when an order has been fully completed (now COMPLETED). */
+export interface OrderCompletedEvent {
+  orderId: string;
+  userId: string;
+  occurredAt: string;
+}
+
 /** Published when an order has failed (now FAILED). */
 export interface OrderFailedEvent {
   orderId: string;
