@@ -1,8 +1,10 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { CacheService } from '@/modules/cache/cache.service';
 import { OrderRoutingKey } from '@/modules/messaging/events/order-events';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
@@ -22,6 +24,12 @@ describe('OrdersService', () => {
     publish: jest.fn(),
   };
 
+  const cacheMock = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -33,6 +41,14 @@ describe('OrdersService', () => {
         {
           provide: EventPublisher,
           useValue: publisherMock,
+        },
+        {
+          provide: CacheService,
+          useValue: cacheMock,
+        },
+        {
+          provide: ConfigService,
+          useValue: { getOrThrow: () => 60 },
         },
       ],
     }).compile();
@@ -107,7 +123,52 @@ describe('OrdersService', () => {
       expect(result).toBe(order);
     });
 
+    it('caches the order on a miss so the next read can be served from Redis', async () => {
+      const order = OrderEntityMother.create({
+        id: 'order-1',
+        userId: 'user-1',
+      });
+      cacheMock.get.mockResolvedValue(undefined);
+      repositoryMock.findOneBy.mockResolvedValue(order);
+
+      await service.getOrderForUser('order-1', 'user-1');
+
+      expect(cacheMock.set).toHaveBeenCalledWith('order:order-1', order, 60);
+    });
+
+    it('serves an owned order from cache without hitting the database', async () => {
+      const cached = OrderEntityMother.create({
+        id: 'order-1',
+        userId: 'user-1',
+      });
+      cacheMock.get.mockResolvedValue(cached);
+
+      const result = await service.getOrderForUser('order-1', 'user-1');
+
+      expect(repositoryMock.findOneBy).not.toHaveBeenCalled();
+      expect(result.id).toBe('order-1');
+      expect(result.createdAt).toBeInstanceOf(Date);
+    });
+
+    it('ignores a cached order owned by someone else and falls through to the DB', async () => {
+      const cached = OrderEntityMother.create({
+        id: 'order-1',
+        userId: 'other-user',
+      });
+      cacheMock.get.mockResolvedValue(cached);
+      repositoryMock.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.getOrderForUser('order-1', 'user-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(repositoryMock.findOneBy).toHaveBeenCalledWith({
+        id: 'order-1',
+        userId: 'user-1',
+      });
+    });
+
     it('throws NotFoundException when the order is missing or not owned', async () => {
+      cacheMock.get.mockResolvedValue(undefined);
       repositoryMock.findOneBy.mockResolvedValue(null);
 
       await expect(
@@ -134,6 +195,21 @@ describe('OrdersService', () => {
 
       expect(result.status).toBe(OrderStatus.RESERVED);
       expect(repositoryMock.save).toHaveBeenCalledWith(order);
+    });
+
+    it('invalidates the cached order after a successful transition', async () => {
+      const order = OrderEntityMother.create({
+        id: 'order-1',
+        status: OrderStatus.PENDING,
+      });
+      repositoryMock.findOneBy.mockResolvedValue(order);
+      repositoryMock.save.mockImplementation((value: OrderEntity) =>
+        Promise.resolve(value),
+      );
+
+      await service.transitionOrder('order-1', OrderStatus.RESERVED);
+
+      expect(cacheMock.del).toHaveBeenCalledWith('order:order-1');
     });
 
     it('rejects an illegal transition with ConflictException and does not persist', async () => {

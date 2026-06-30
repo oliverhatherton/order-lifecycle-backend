@@ -19,19 +19,25 @@ import {
   RabbitMQContainer,
   StartedRabbitMQContainer,
 } from '@testcontainers/rabbitmq';
+import { RedisContainer, StartedRedisContainer } from '@testcontainers/redis';
 import { buildValidationPipe } from '@/common/validation/validation-pipe';
 import { RegisterDTOMother } from '@/modules/auth/dto/RegisterDTOMother';
 import { LoginDTOMother } from '@/modules/auth/dto/LoginDTOMother';
 import { AccessTokenResponseDTO } from '@/modules/auth/dto/AccessTokenResponseDTO';
 import { REFRESH_TOKEN_COOKIE } from '@/modules/auth/auth.constants';
+import { CacheModule } from '@/modules/cache/cache.module';
+import { REDIS_CLIENT } from '@/modules/cache/redis.provider';
 import jwtConfig from '@/config/jwt.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
+import redisConfig from '@/config/redis.config';
+import { createFakeRedis } from '@test/support/fake-redis';
 
 export interface TestApp {
   app: INestApplication<App>;
   dataSource: DataSource;
   container: StartedPostgreSqlContainer;
   rabbitContainer?: StartedRabbitMQContainer;
+  redisContainer?: StartedRedisContainer;
 }
 
 export interface StartTestAppOptions {
@@ -41,6 +47,12 @@ export interface StartTestAppOptions {
   imports: NonNullable<ModuleMetadata['imports']>;
   /** Start a RabbitMQ container and point the messaging config at it. */
   rabbitmq?: boolean;
+  /**
+   * Start a real Redis container so cache behaviour (hits, invalidation) can be
+   * asserted. Off by default: suites that only need the app to boot get an
+   * in-memory fake Redis instead, avoiding an extra container per suite.
+   */
+  redis?: boolean;
   /** Replace providers with test doubles (e.g. force a payment outcome). */
   overrides?: Array<{ provide: InjectionToken; useValue: unknown }>;
 }
@@ -56,13 +68,26 @@ export async function startTestApp(
 ): Promise<TestApp> {
   const container = await new PostgreSqlContainer('postgres:16').start();
 
-  const load: ConfigFactory[] = [jwtConfig];
+  // redisConfig is always loaded so the global CacheModule's DI resolves; the
+  // client is either a real container (redis: true) or an in-memory fake.
+  const load: ConfigFactory[] = [jwtConfig, redisConfig];
+  const overrides = [...(options.overrides ?? [])];
+
   let rabbitContainer: StartedRabbitMQContainer | undefined;
   if (options.rabbitmq) {
     rabbitContainer = await new RabbitMQContainer('rabbitmq:4').start();
     // rabbitmqConfig reads this at factory time.
     process.env.RABBITMQ_URL = rabbitContainer.getAmqpUrl();
     load.push(rabbitmqConfig);
+  }
+
+  let redisContainer: StartedRedisContainer | undefined;
+  if (options.redis) {
+    redisContainer = await new RedisContainer('redis:7').start();
+    // redisConfig reads this at factory time.
+    process.env.REDIS_URL = redisContainer.getConnectionUrl();
+  } else {
+    overrides.push({ provide: REDIS_CLIENT, useValue: createFakeRedis() });
   }
 
   let builder = Test.createTestingModule({
@@ -78,10 +103,13 @@ export async function startTestApp(
         entities: options.entities,
         synchronize: true,
       }),
+      // Global cache infra — provides CacheService to the feature modules
+      // (the real app wires this via AppModule).
+      CacheModule,
       ...options.imports,
     ],
   });
-  for (const override of options.overrides ?? []) {
+  for (const override of overrides) {
     builder = builder
       .overrideProvider(override.provide)
       .useValue(override.useValue);
@@ -98,6 +126,7 @@ export async function startTestApp(
     dataSource: moduleFixture.get(DataSource),
     container,
     rabbitContainer,
+    redisContainer,
   };
 }
 
@@ -106,6 +135,7 @@ export async function stopTestApp(testApp?: TestApp): Promise<void> {
   await testApp?.app.close();
   await testApp?.container.stop();
   await testApp?.rabbitContainer?.stop();
+  await testApp?.redisContainer?.stop();
 }
 
 export interface E2eContext {

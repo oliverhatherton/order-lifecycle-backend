@@ -10,21 +10,24 @@ import { InventoryModule } from '@/modules/inventory/inventory.module';
 import { PaymentModule } from '@/modules/payment/payment.module';
 import { CompletionModule } from '@/modules/completion/completion.module';
 import { EmailModule } from '@/modules/email/email.module';
+import { CacheModule } from '@/modules/cache/cache.module';
 import databaseConfig from '@/config/database.config';
 import jwtConfig from '@/config/jwt.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
+import redisConfig from '@/config/redis.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [databaseConfig, jwtConfig, rabbitmqConfig],
+      load: [databaseConfig, jwtConfig, rabbitmqConfig, redisConfig],
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>
         configService.get<TypeOrmModuleOptions>('database')!,
     }),
+    CacheModule,
     AuthModule,
     OrdersModule,
     InventoryModule,

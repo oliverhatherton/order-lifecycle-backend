@@ -20,6 +20,14 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
+  redis:
+    image: redis:7
+    ports:
+      - '6379:6379' # cache (Epic 4)
+    volumes:
+      - redis_data:/data
+
 volumes:
   postgres_data:
   rabbitmq_data:
+  redis_data:
