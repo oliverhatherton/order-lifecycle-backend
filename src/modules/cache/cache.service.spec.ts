@@ -49,6 +49,42 @@ describe('CacheService', () => {
     });
   });
 
+  describe('getStats', () => {
+    it('counts hits and misses per key class and overall', async () => {
+      const store: Record<string, string> = { 'order:1': JSON.stringify({}) };
+      const service = build({
+        get: jest.fn((key: string) => Promise.resolve(store[key] ?? null)),
+      });
+
+      await service.get('order:1'); // hit
+      await service.get('order:2'); // miss
+      await service.get('orders:user:7'); // miss
+
+      const stats = service.getStats();
+      expect(stats.byClass.order).toEqual({ hits: 1, misses: 1, hitRate: 0.5 });
+      expect(stats.byClass.orders).toEqual({ hits: 0, misses: 1, hitRate: 0 });
+      expect(stats.overall).toEqual({
+        hits: 1,
+        misses: 2,
+        hitRate: 1 / 3,
+      });
+    });
+
+    it('counts a Redis error as a miss', async () => {
+      const service = build({
+        get: jest.fn().mockRejectedValue(new Error('down')),
+      });
+
+      await service.get('order:1');
+
+      expect(service.getStats().byClass.order).toEqual({
+        hits: 0,
+        misses: 1,
+        hitRate: 0,
+      });
+    });
+  });
+
   describe('del', () => {
     it('removes the given keys', async () => {
       const del = jest.fn().mockResolvedValue(2);
