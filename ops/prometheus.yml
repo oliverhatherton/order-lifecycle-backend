@@ -1,0 +1,11 @@
+# Prometheus scrape config for local observability (Epic 5).
+# Brought up with `docker compose --profile observability up`. The app runs on
+# the host (pnpm start:dev), so we scrape it via host.docker.internal.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: order-lifecycle-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3000']

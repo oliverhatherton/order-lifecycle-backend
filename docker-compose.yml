@@ -27,7 +27,36 @@ services:
     volumes:
       - redis_data:/data
 
+  # Observability stack (Epic 5). Opt-in: `docker compose --profile observability up`.
+  # Scrapes the app's /metrics on the host; Grafana is unprovisioned (add a
+  # Prometheus datasource at http://prometheus:9090 and build boards by hand).
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ['observability']
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: ['observability']
+    ports:
+      - '3001:3000' # UI on 3001 (the app owns 3000); login admin/admin
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   rabbitmq_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

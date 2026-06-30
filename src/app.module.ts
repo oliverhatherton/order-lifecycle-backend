@@ -11,6 +11,7 @@ import { PaymentModule } from '@/modules/payment/payment.module';
 import { CompletionModule } from '@/modules/completion/completion.module';
 import { EmailModule } from '@/modules/email/email.module';
 import { CacheModule } from '@/modules/cache/cache.module';
+import { MetricsModule } from '@/modules/metrics/metrics.module';
 import databaseConfig from '@/config/database.config';
 import jwtConfig from '@/config/jwt.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
@@ -28,6 +29,7 @@ import redisConfig from '@/config/redis.config';
         configService.get<TypeOrmModuleOptions>('database')!,
     }),
     CacheModule,
+    MetricsModule,
     AuthModule,
     OrdersModule,
     InventoryModule,
