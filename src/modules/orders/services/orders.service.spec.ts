@@ -79,6 +79,17 @@ describe('OrdersService', () => {
       expect(result.userId).toBe('user-1');
     });
 
+    it("invalidates the owner's cached order list", async () => {
+      const created = OrderEntityMother.create({ userId: 'user-1' });
+      repositoryMock.create.mockReturnValue(created);
+      repositoryMock.save.mockResolvedValue(created);
+      publisherMock.publish.mockResolvedValue(undefined);
+
+      await service.createOrder('user-1');
+
+      expect(cacheMock.del).toHaveBeenCalledWith('orders:user:user-1');
+    });
+
     it('still returns the saved order if publishing fails (publish-after-commit)', async () => {
       const created = OrderEntityMother.create({ userId: 'user-1' });
       repositoryMock.create.mockReturnValue(created);
@@ -92,8 +103,9 @@ describe('OrdersService', () => {
   });
 
   describe('listOrdersForUser', () => {
-    it("returns the user's orders most recent first", async () => {
+    it("returns the user's orders most recent first and caches them on a miss", async () => {
       const orders = [OrderEntityMother.create({ userId: 'user-1' })];
+      cacheMock.get.mockResolvedValue(undefined);
       repositoryMock.find.mockResolvedValue(orders);
 
       const result = await service.listOrdersForUser('user-1');
@@ -103,6 +115,22 @@ describe('OrdersService', () => {
         order: { createdAt: 'DESC' },
       });
       expect(result).toBe(orders);
+      expect(cacheMock.set).toHaveBeenCalledWith(
+        'orders:user:user-1',
+        orders,
+        60,
+      );
+    });
+
+    it('serves the list from cache without hitting the database', async () => {
+      const cached = [OrderEntityMother.create({ userId: 'user-1' })];
+      cacheMock.get.mockResolvedValue(cached);
+
+      const result = await service.listOrdersForUser('user-1');
+
+      expect(repositoryMock.find).not.toHaveBeenCalled();
+      expect(result).toHaveLength(1);
+      expect(result[0].createdAt).toBeInstanceOf(Date);
     });
   });
 
@@ -197,9 +225,10 @@ describe('OrdersService', () => {
       expect(repositoryMock.save).toHaveBeenCalledWith(order);
     });
 
-    it('invalidates the cached order after a successful transition', async () => {
+    it('invalidates the cached order and the owner list after a transition', async () => {
       const order = OrderEntityMother.create({
         id: 'order-1',
+        userId: 'user-1',
         status: OrderStatus.PENDING,
       });
       repositoryMock.findOneBy.mockResolvedValue(order);
@@ -209,7 +238,10 @@ describe('OrdersService', () => {
 
       await service.transitionOrder('order-1', OrderStatus.RESERVED);
 
-      expect(cacheMock.del).toHaveBeenCalledWith('order:order-1');
+      expect(cacheMock.del).toHaveBeenCalledWith(
+        'order:order-1',
+        'orders:user:user-1',
+      );
     });
 
     it('rejects an illegal transition with ConflictException and does not persist', async () => {

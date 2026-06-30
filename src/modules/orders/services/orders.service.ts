@@ -20,6 +20,9 @@ import {
 /** Cache key for a single order by id. */
 const orderKey = (id: string): string => `order:${id}`;
 
+/** Cache key for a user's full order list. */
+const userOrdersKey = (userId: string): string => `orders:user:${userId}`;
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -59,15 +62,31 @@ export class OrdersService {
       );
     }
 
+    // The new order changes the owner's list, so drop its cached copy.
+    await this.cache.del(userOrdersKey(userId));
+
     return order;
   }
 
-  /** Lists the user's own orders, most recent first. */
-  listOrdersForUser(userId: string): Promise<OrderEntity[]> {
-    return this.orderRepository.find({
+  /**
+   * Lists the user's own orders, most recent first. Cache-aside on
+   * `orders:user:{userId}`; the key is invalidated whenever the user's set of
+   * orders changes (create / transition).
+   */
+  async listOrdersForUser(userId: string): Promise<OrderEntity[]> {
+    const key = userOrdersKey(userId);
+    const cached = await this.cache.get<OrderEntity[]>(key);
+    if (cached) {
+      return cached.map(rehydrateOrder);
+    }
+
+    const orders = await this.orderRepository.find({
       where: { userId },
       order: { createdAt: 'DESC' },
     });
+
+    await this.cache.set(key, orders, this.cacheTtl);
+    return orders;
   }
 
   /**
@@ -124,9 +143,10 @@ export class OrdersService {
     const saved = await repository.save(order);
     this.logger.log(`Order ${orderId} transitioned ${from} -> ${to}`);
 
-    // Write-through invalidation: drop the by-id entry so the next read
-    // repopulates with the new status (TTL is only the backstop).
-    await this.cache.del(orderKey(orderId));
+    // Write-through invalidation: drop the by-id entry and the owner's list (a
+    // status change alters both) so the next read repopulates with the new
+    // status (TTL is only the backstop).
+    await this.cache.del(orderKey(orderId), userOrdersKey(order.userId));
 
     return saved;
   }

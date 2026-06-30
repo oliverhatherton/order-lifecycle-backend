@@ -43,6 +43,12 @@ describe('Order caching (e2e)', () => {
       .set('Authorization', `Bearer ${token}`);
   }
 
+  function listOrders(token: string) {
+    return request(ctx.app.getHttpServer())
+      .get('/orders')
+      .set('Authorization', `Bearer ${token}`);
+  }
+
   it('serves a repeated read from cache, staying stable until invalidated', async () => {
     const token = await registerAndLogin(ctx.app);
     const id = await createOrder(token);
@@ -74,6 +80,37 @@ describe('Order caching (e2e)', () => {
 
     const fresh = await getOrder(token, id).expect(200);
     expect((fresh.body as OrderResponseDTO).status).toBe(OrderStatus.RESERVED);
+  });
+
+  it('serves the order list from cache, staying stable until invalidated', async () => {
+    const token = await registerAndLogin(ctx.app);
+    const id = await createOrder(token);
+
+    // First list read caches orders:user:{userId}.
+    const first = await listOrders(token).expect(200);
+    expect((first.body as OrderResponseDTO[]).length).toBe(1);
+
+    // Delete the row directly, bypassing the service (so no invalidation fires).
+    await ctx.dataSource.query(`DELETE FROM "orders" WHERE id = $1`, [id]);
+
+    // The list is still served from cache — proving it didn't hit the DB.
+    const second = await listOrders(token).expect(200);
+    expect((second.body as OrderResponseDTO[]).length).toBe(1);
+  });
+
+  it('invalidates the list cache when the user creates another order', async () => {
+    const token = await registerAndLogin(ctx.app);
+    await createOrder(token);
+
+    // Cache the single-order list.
+    const first = await listOrders(token).expect(200);
+    expect((first.body as OrderResponseDTO[]).length).toBe(1);
+
+    // Creating another order through the service invalidates the list.
+    await createOrder(token);
+
+    const second = await listOrders(token).expect(200);
+    expect((second.body as OrderResponseDTO[]).length).toBe(2);
   });
 
   it('does not leak a cached order to another user', async () => {
