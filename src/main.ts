@@ -1,3 +1,5 @@
+// Must be first: starts OpenTelemetry before Nest and its deps are required.
+import '@/tracing.bootstrap';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';

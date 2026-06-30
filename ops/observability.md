@@ -50,3 +50,17 @@ DB operation p95:
 ```promql
 histogram_quantile(0.95, sum by (le, operation) (rate(db_query_duration_seconds_bucket[5m])))
 ```
+
+## Tracing (5.4)
+
+OpenTelemetry auto-instruments HTTP, `pg` and `amqplib`, so one trace follows a
+request through the DB and across RabbitMQ to `COMPLETED`.
+
+- **No setup:** with no `OTEL_EXPORTER_OTLP_ENDPOINT`, spans print to the console
+  (`pnpm start:dev`) — handy to eyeball the span tree locally.
+- **Jaeger UI:** `docker compose --profile observability up`, set
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`, restart the app, then
+  open <http://localhost:16686>, pick service `order-lifecycle-backend`, and a
+  `POST /orders` shows one trace spanning the HTTP handler, the DB writes and
+  each consumer hop. The consumer spans are children of the request because the
+  amqplib instrumentation propagates W3C trace context on the message headers.
