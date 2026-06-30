@@ -1,5 +1,9 @@
-import { Global, Module, type OnApplicationShutdown } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
+import {
+  Global,
+  Inject,
+  Module,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import { CacheService } from '@/modules/cache/cache.service';
 import { REDIS_CLIENT, redisProvider } from '@/modules/cache/redis.provider';

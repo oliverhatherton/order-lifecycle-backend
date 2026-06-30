@@ -15,7 +15,7 @@ export interface CacheStats {
   overall: CacheClassStats;
 }
 
-/** A read either found a value (hit) or didn't / errored (miss). */
+/** The stats bucket for a key: its prefix before the first ':' (e.g. `order`). */
 const keyClass = (key: string): string => key.split(':')[0];
 
 const withRate = (hits: number, misses: number): CacheClassStats => ({
