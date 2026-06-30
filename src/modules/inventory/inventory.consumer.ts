@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
+import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
+import { runWithCorrelationId } from '@/common/correlation/correlation';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
   ORDER_DLX,
@@ -29,6 +31,7 @@ export class InventoryConsumer {
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
     private readonly publisher: EventPublisher,
+    private readonly cls: ClsService,
   ) {}
 
   @RabbitSubscribe({
@@ -38,7 +41,18 @@ export class InventoryConsumer {
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
     errorHandler: createRetryErrorHandler('inventory.order_created'),
   })
-  async onOrderCreated(
+  onOrderCreated(
+    event: OrderCreatedEvent,
+    amqpMsg: ConsumeMessage,
+  ): Promise<Nack | void> {
+    // Continue the publisher's correlation id for this whole handler so its logs
+    // and the InventoryReserved it emits stay on the same trace.
+    return runWithCorrelationId(this.cls, amqpMsg, () =>
+      this.reserve(event, amqpMsg),
+    );
+  }
+
+  private async reserve(
     event: OrderCreatedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {

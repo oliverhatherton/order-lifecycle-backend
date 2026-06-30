@@ -4,6 +4,7 @@ import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { PaymentConsumer } from '@/modules/payment/payment.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import {
@@ -52,6 +53,7 @@ describe('PaymentConsumer', () => {
       ordersMock as unknown as OrdersService,
       publisherMock as unknown as EventPublisher,
       gatewayMock,
+      fakeCls(),
     );
   });
 

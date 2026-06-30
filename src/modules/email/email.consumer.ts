@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
+import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
+import { runWithCorrelationId } from '@/common/correlation/correlation';
 import {
   ORDER_DLX,
   ORDER_EXCHANGE,
@@ -21,7 +23,10 @@ const CONSUMER = 'email';
 export class EmailConsumer {
   private readonly logger = new Logger(EmailConsumer.name);
 
-  constructor(private readonly inbox: InboxService) {}
+  constructor(
+    private readonly inbox: InboxService,
+    private readonly cls: ClsService,
+  ) {}
 
   @RabbitSubscribe({
     exchange: ORDER_EXCHANGE,
@@ -30,7 +35,17 @@ export class EmailConsumer {
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
     errorHandler: createRetryErrorHandler('email.notifications'),
   })
-  async onTerminalEvent(
+  onTerminalEvent(
+    event: OrderCompletedEvent | OrderFailedEvent,
+    amqpMsg: ConsumeMessage,
+  ): Promise<Nack | void> {
+    // Continue the upstream correlation id so the notification log joins the trace.
+    return runWithCorrelationId(this.cls, amqpMsg, () =>
+      this.notify(event, amqpMsg),
+    );
+  }
+
+  private async notify(
     event: OrderCompletedEvent | OrderFailedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {

@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
+import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
+import { runWithCorrelationId } from '@/common/correlation/correlation';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import {
@@ -30,6 +32,7 @@ export class PaymentConsumer {
     private readonly orders: OrdersService,
     private readonly publisher: EventPublisher,
     private readonly gateway: PaymentGateway,
+    private readonly cls: ClsService,
   ) {}
 
   @RabbitSubscribe({
@@ -39,7 +42,18 @@ export class PaymentConsumer {
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
     errorHandler: createRetryErrorHandler('payment.inventory_reserved'),
   })
-  async onInventoryReserved(
+  onInventoryReserved(
+    event: InventoryReservedEvent,
+    amqpMsg: ConsumeMessage,
+  ): Promise<Nack | void> {
+    // Continue the upstream correlation id across this handler and anything it
+    // publishes (PaymentProcessed / OrderFailed).
+    return runWithCorrelationId(this.cls, amqpMsg, () =>
+      this.authorizeAndAdvance(event, amqpMsg),
+    );
+  }
+
+  private async authorizeAndAdvance(
     event: InventoryReservedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {

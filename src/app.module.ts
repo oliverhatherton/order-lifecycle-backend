@@ -12,6 +12,7 @@ import { CompletionModule } from '@/modules/completion/completion.module';
 import { EmailModule } from '@/modules/email/email.module';
 import { CacheModule } from '@/modules/cache/cache.module';
 import { MetricsModule } from '@/modules/metrics/metrics.module';
+import { correlationClsModule } from '@/common/correlation/correlation';
 import databaseConfig from '@/config/database.config';
 import jwtConfig from '@/config/jwt.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
@@ -23,6 +24,7 @@ import redisConfig from '@/config/redis.config';
       isGlobal: true,
       load: [databaseConfig, jwtConfig, rabbitmqConfig, redisConfig],
     }),
+    correlationClsModule(),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>

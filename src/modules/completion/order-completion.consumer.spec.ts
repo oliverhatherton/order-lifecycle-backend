@@ -4,6 +4,7 @@ import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { OrderCompletionConsumer } from '@/modules/completion/order-completion.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import {
@@ -34,6 +35,7 @@ describe('OrderCompletionConsumer', () => {
       inboxMock as unknown as InboxService,
       ordersMock as unknown as OrdersService,
       publisherMock as unknown as EventPublisher,
+      fakeCls(),
     );
   });
 

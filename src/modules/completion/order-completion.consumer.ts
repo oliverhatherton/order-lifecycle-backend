@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
+import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
+import { runWithCorrelationId } from '@/common/correlation/correlation';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
   ORDER_DLX,
@@ -28,6 +30,7 @@ export class OrderCompletionConsumer {
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
     private readonly publisher: EventPublisher,
+    private readonly cls: ClsService,
   ) {}
 
   @RabbitSubscribe({
@@ -37,7 +40,17 @@ export class OrderCompletionConsumer {
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
     errorHandler: createRetryErrorHandler('completion.payment_processed'),
   })
-  async onPaymentProcessed(
+  onPaymentProcessed(
+    event: PaymentProcessedEvent,
+    amqpMsg: ConsumeMessage,
+  ): Promise<Nack | void> {
+    // Continue the upstream correlation id across completion + OrderCompleted.
+    return runWithCorrelationId(this.cls, amqpMsg, () =>
+      this.complete(event, amqpMsg),
+    );
+  }
+
+  private async complete(
     event: PaymentProcessedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {

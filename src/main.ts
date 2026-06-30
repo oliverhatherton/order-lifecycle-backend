@@ -1,13 +1,17 @@
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ClsService } from 'nestjs-cls';
 import cookieParser from 'cookie-parser';
 import { AppModule } from '@/app.module';
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
+import { CorrelationLogger } from '@/common/correlation/correlation.logger';
 import { buildValidationPipe } from '@/common/validation/validation-pipe';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // Stamp every log line with the active correlation id (see CLS middleware).
+  app.useLogger(new CorrelationLogger(app.get(ClsService)));
   app.use(cookieParser());
   app.useGlobalInterceptors(new LoggingInterceptor());
   app.useGlobalPipes(buildValidationPipe());

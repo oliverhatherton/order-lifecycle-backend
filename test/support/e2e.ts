@@ -27,6 +27,7 @@ import { AccessTokenResponseDTO } from '@/modules/auth/dto/AccessTokenResponseDT
 import { REFRESH_TOKEN_COOKIE } from '@/modules/auth/auth.constants';
 import { CacheModule } from '@/modules/cache/cache.module';
 import { REDIS_CLIENT } from '@/modules/cache/redis.provider';
+import { correlationClsModule } from '@/common/correlation/correlation';
 import jwtConfig from '@/config/jwt.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 import redisConfig from '@/config/redis.config';
@@ -106,6 +107,9 @@ export async function startTestApp(
       // Global cache infra — provides CacheService to the feature modules
       // (the real app wires this via AppModule).
       CacheModule,
+      // Correlation-id CLS (middleware + ClsService) — the app wires this in
+      // AppModule; feature modules and consumers depend on ClsService.
+      correlationClsModule(),
       ...options.imports,
     ],
   });

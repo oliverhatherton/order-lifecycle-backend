@@ -2,6 +2,7 @@ import { ConsumeMessage } from 'amqplib';
 import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { EmailConsumer } from '@/modules/email/email.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
+import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import {
   OrderCompletedEvent,
   OrderFailedEvent,
@@ -22,7 +23,10 @@ describe('EmailConsumer', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     inboxMock.runOnce.mockResolvedValue(true);
-    consumer = new EmailConsumer(inboxMock as unknown as InboxService);
+    consumer = new EmailConsumer(
+      inboxMock as unknown as InboxService,
+      fakeCls(),
+    );
   });
 
   it('reacts once to OrderCompleted via the email inbox', async () => {
