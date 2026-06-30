@@ -13,6 +13,10 @@ import { isTransitionAllowed } from '@/modules/orders/order-state-machine';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { CacheService } from '@/modules/cache/cache.service';
 import {
+  recordTerminalState,
+  timeDb,
+} from '@/modules/metrics/metrics.collectors';
+import {
   OrderCreatedEvent,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
@@ -22,6 +26,14 @@ const orderKey = (id: string): string => `order:${id}`;
 
 /** Cache key for a user's full order list. */
 const userOrdersKey = (userId: string): string => `orders:user:${userId}`;
+
+/** Terminal statuses map to the `orders_terminal_total` metric's state label. */
+const TERMINAL_STATE_LABELS: Partial<
+  Record<OrderStatus, 'completed' | 'failed'>
+> = {
+  [OrderStatus.COMPLETED]: 'completed',
+  [OrderStatus.FAILED]: 'failed',
+};
 
 @Injectable()
 export class OrdersService {
@@ -40,8 +52,8 @@ export class OrdersService {
 
   /** Creates a new PENDING order owned by the given user and announces it. */
   async createOrder(userId: string): Promise<OrderEntity> {
-    const order = await this.orderRepository.save(
-      this.orderRepository.create({ userId }),
+    const order = await timeDb('order.create', () =>
+      this.orderRepository.save(this.orderRepository.create({ userId })),
     );
     this.logger.log(`Created order ${order.id} for user ${userId}`);
 
@@ -80,10 +92,12 @@ export class OrdersService {
       return cached.map(rehydrateOrder);
     }
 
-    const orders = await this.orderRepository.find({
-      where: { userId },
-      order: { createdAt: 'DESC' },
-    });
+    const orders = await timeDb('orders.list', () =>
+      this.orderRepository.find({
+        where: { userId },
+        order: { createdAt: 'DESC' },
+      }),
+    );
 
     await this.cache.set(key, orders, this.cacheTtl);
     return orders;
@@ -104,7 +118,9 @@ export class OrdersService {
       return rehydrateOrder(cached);
     }
 
-    const order = await this.orderRepository.findOneBy({ id, userId });
+    const order = await timeDb('order.find', () =>
+      this.orderRepository.findOneBy({ id, userId }),
+    );
     if (!order) {
       throw new NotFoundException('Order not found');
     }
@@ -129,7 +145,9 @@ export class OrdersService {
       ? manager.getRepository(OrderEntity)
       : this.orderRepository;
 
-    const order = await repository.findOneBy({ id: orderId });
+    const order = await timeDb('order.find', () =>
+      repository.findOneBy({ id: orderId }),
+    );
     if (!order) {
       throw new NotFoundException('Order not found');
     }
@@ -140,8 +158,15 @@ export class OrdersService {
     }
 
     order.status = to;
-    const saved = await repository.save(order);
+    const saved = await timeDb('order.update', () => repository.save(order));
     this.logger.log(`Order ${orderId} transitioned ${from} -> ${to}`);
+
+    // A terminal status is a business outcome worth a dedicated counter so a
+    // failure spike is detectable independently of the per-consumer metrics.
+    const terminalLabel = TERMINAL_STATE_LABELS[to];
+    if (terminalLabel) {
+      recordTerminalState(terminalLabel);
+    }
 
     // Write-through invalidation: drop the by-id entry and the owner's list (a
     // status change alters both) so the next read repopulates with the new

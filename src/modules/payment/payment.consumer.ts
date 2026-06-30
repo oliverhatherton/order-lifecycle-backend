@@ -7,6 +7,10 @@ import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
+import {
+  recordConsumerOutcome,
+  startConsumerTimer,
+} from '@/modules/metrics/metrics.collectors';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import {
@@ -66,35 +70,47 @@ export class PaymentConsumer {
       this.logger.error(
         `InventoryReserved for order ${event.orderId} has no messageId; dead-lettering`,
       );
+      recordConsumerOutcome(CONSUMER, 'failed');
       return new Nack(false);
     }
 
-    const result = await this.gateway.authorize(event);
-    const targetStatus = result.authorized
-      ? OrderStatus.PAID
-      : OrderStatus.FAILED;
+    const stopTimer = startConsumerTimer(CONSUMER);
+    try {
+      const result = await this.gateway.authorize(event);
+      const targetStatus = result.authorized
+        ? OrderStatus.PAID
+        : OrderStatus.FAILED;
 
-    const processed = await this.inbox.runOnce(
-      messageId,
-      CONSUMER,
-      async (manager) => {
-        await this.orders.transitionOrder(event.orderId, targetStatus, manager);
-      },
-    );
-    if (!processed) {
-      this.logger.log(
-        `Skipped already-processed InventoryReserved for order ${event.orderId}`,
+      const processed = await this.inbox.runOnce(
+        messageId,
+        CONSUMER,
+        async (manager) => {
+          await this.orders.transitionOrder(
+            event.orderId,
+            targetStatus,
+            manager,
+          );
+        },
       );
-      return;
-    }
+      if (!processed) {
+        this.logger.log(
+          `Skipped already-processed InventoryReserved for order ${event.orderId}`,
+        );
+        recordConsumerOutcome(CONSUMER, 'skipped');
+        return;
+      }
 
-    if (result.authorized) {
-      await this.publishPaid(event);
-    } else {
-      await this.publishFailed(
-        event,
-        result.declineReason ?? 'payment_declined',
-      );
+      recordConsumerOutcome(CONSUMER, 'processed');
+      if (result.authorized) {
+        await this.publishPaid(event);
+      } else {
+        await this.publishFailed(
+          event,
+          result.declineReason ?? 'payment_declined',
+        );
+      }
+    } finally {
+      stopTimer();
     }
   }
 

@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { MessageErrorHandler } from '@golevelup/nestjs-rabbitmq';
 import type { Channel, ConsumeMessage } from 'amqplib';
+import { recordConsumerOutcome } from '@/modules/metrics/metrics.collectors';
 
 const ATTEMPTS_HEADER = 'x-attempts';
 const DEFAULT_MAX_RETRIES = 3;
@@ -8,6 +9,11 @@ const logger = new Logger('RetryErrorHandler');
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The consumer label for a queue, e.g. `payment.inventory_reserved` → `payment`. */
+function consumerOf(queue: string): string {
+  return queue.split('.')[0];
 }
 
 /**
@@ -35,6 +41,7 @@ export function createRetryErrorHandler(
         headers: { ...headers, [ATTEMPTS_HEADER]: attempts + 1 },
       });
       channel.ack(msg);
+      recordConsumerOutcome(consumerOf(queue), 'retried');
       return;
     }
 
@@ -42,5 +49,6 @@ export function createRetryErrorHandler(
       `Exhausted ${maxRetries} retries for ${queue}; dead-lettering: ${errorMessage(error)}`,
     );
     channel.nack(msg, false, false);
+    recordConsumerOutcome(consumerOf(queue), 'failed');
   };
 }
