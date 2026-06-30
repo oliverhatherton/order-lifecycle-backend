@@ -43,6 +43,10 @@ export class PaymentConsumer {
     event: InventoryReservedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {
+    // Payment validates the messageId up front (rather than via processEventOnce
+    // like the other consumers) because it authorises *before* the inbox
+    // transaction — so the external call is never made for a bad or
+    // already-handled message and never holds the DB transaction open.
     const messageId = amqpMsg.properties.messageId as string | undefined;
     if (!messageId) {
       this.logger.error(
@@ -51,8 +55,6 @@ export class PaymentConsumer {
       return new Nack(false);
     }
 
-    // Decide the outcome before the transaction so the same decision drives both
-    // the transition and the event published afterwards.
     const result = await this.gateway.authorize(event);
     const targetStatus = result.authorized
       ? OrderStatus.PAID
@@ -65,7 +67,6 @@ export class PaymentConsumer {
         await this.orders.transitionOrder(event.orderId, targetStatus, manager);
       },
     );
-
     if (!processed) {
       this.logger.log(
         `Skipped already-processed InventoryReserved for order ${event.orderId}`,

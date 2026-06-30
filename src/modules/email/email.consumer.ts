@@ -3,6 +3,7 @@ import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
 import type { ConsumeMessage } from 'amqplib';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
+import { processEventOnce } from '@/modules/messaging/process-event-once';
 import {
   ORDER_DLX,
   ORDER_EXCHANGE,
@@ -33,26 +34,25 @@ export class EmailConsumer {
     event: OrderCompletedEvent | OrderFailedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {
-    const messageId = amqpMsg.properties.messageId as string | undefined;
-    if (!messageId) {
-      this.logger.error(
-        `Terminal event for order ${event.orderId} has no messageId; dead-lettering`,
-      );
-      return new Nack(false);
-    }
-
     const failed = amqpMsg.fields.routingKey === OrderRoutingKey.Failed;
 
     // Inbox keeps the notification to once per message; the "send" is a log,
     // since real email delivery is out of scope for this epic.
-    await this.inbox.runOnce(messageId, CONSUMER, () => {
-      const suffix = failed
-        ? ` failed (${(event as OrderFailedEvent).reason})`
-        : ' completed';
-      this.logger.log(
-        `Email to user ${event.userId}: order ${event.orderId}${suffix}`,
-      );
-      return Promise.resolve();
-    });
+    const outcome = await processEventOnce(
+      amqpMsg,
+      CONSUMER,
+      this.inbox,
+      this.logger,
+      () => {
+        const suffix = failed
+          ? ` failed (${(event as OrderFailedEvent).reason})`
+          : ' completed';
+        this.logger.log(
+          `Email to user ${event.userId}: order ${event.orderId}${suffix}`,
+        );
+        return Promise.resolve();
+      },
+    );
+    if (outcome instanceof Nack) return outcome;
   }
 }

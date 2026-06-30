@@ -5,6 +5,7 @@ import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
+import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
   ORDER_DLX,
@@ -41,19 +42,13 @@ export class InventoryConsumer {
     event: OrderCreatedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {
-    const messageId = amqpMsg.properties.messageId as string | undefined;
-    if (!messageId) {
-      this.logger.error(
-        `OrderCreated for order ${event.orderId} has no messageId; dead-lettering`,
-      );
-      return new Nack(false);
-    }
-
     // Reserve inventory (simulated) and advance the order to RESERVED exactly
     // once: the transition and the inbox record commit in one transaction.
-    const processed = await this.inbox.runOnce(
-      messageId,
+    const outcome = await processEventOnce(
+      amqpMsg,
       CONSUMER,
+      this.inbox,
+      this.logger,
       async (manager) => {
         await this.orders.transitionOrder(
           event.orderId,
@@ -62,13 +57,8 @@ export class InventoryConsumer {
         );
       },
     );
-
-    if (!processed) {
-      this.logger.log(
-        `Skipped already-processed OrderCreated for order ${event.orderId}`,
-      );
-      return;
-    }
+    if (outcome instanceof Nack) return outcome;
+    if (outcome === 'skipped') return;
 
     const reserved: InventoryReservedEvent = {
       orderId: event.orderId,
