@@ -6,6 +6,7 @@ import {
 } from '@willsoto/nestjs-prometheus';
 import { HttpMetricsInterceptor } from '@/modules/metrics/http-metrics.interceptor';
 import { HTTP_REQUEST_DURATION_SECONDS } from '@/modules/metrics/metrics.constants';
+import { DURATION_BUCKETS } from '@/modules/metrics/metrics.collectors';
 
 /**
  * Owns Prometheus exposition (`/metrics`, with default process metrics) and the
@@ -23,7 +24,7 @@ import { HTTP_REQUEST_DURATION_SECONDS } from '@/modules/metrics/metrics.constan
       name: HTTP_REQUEST_DURATION_SECONDS,
       help: 'HTTP request duration in seconds, by method, route and status.',
       labelNames: ['method', 'route', 'status_code'],
-      buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+      buckets: DURATION_BUCKETS,
     }),
     { provide: APP_INTERCEPTOR, useClass: HttpMetricsInterceptor },
   ],

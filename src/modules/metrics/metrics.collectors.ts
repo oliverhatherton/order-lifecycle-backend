@@ -9,7 +9,10 @@ import { Counter, Histogram } from 'prom-client';
  * double-registration across the app or test suites.
  */
 
-const DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5];
+/** Shared latency histogram buckets (seconds), used by every duration metric. */
+export const DURATION_BUCKETS = [
+  0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5,
+];
 
 /** A consumer either processed a message, skipped a redelivery, retried, or failed. */
 export type ConsumerOutcome = 'processed' | 'skipped' | 'retried' | 'failed';
