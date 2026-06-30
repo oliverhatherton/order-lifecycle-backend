@@ -4,6 +4,7 @@ import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
   ORDER_DLX,
@@ -34,6 +35,7 @@ export class InventoryConsumer {
     routingKey: OrderRoutingKey.Created,
     queue: 'inventory.order_created',
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
+    errorHandler: createRetryErrorHandler('inventory.order_created'),
   })
   async onOrderCreated(
     event: OrderCreatedEvent,

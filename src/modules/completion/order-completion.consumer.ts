@@ -4,6 +4,7 @@ import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
   ORDER_DLX,
@@ -33,6 +34,7 @@ export class OrderCompletionConsumer {
     routingKey: OrderRoutingKey.PaymentProcessed,
     queue: 'completion.payment_processed',
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
+    errorHandler: createRetryErrorHandler('completion.payment_processed'),
   })
   async onPaymentProcessed(
     event: PaymentProcessedEvent,

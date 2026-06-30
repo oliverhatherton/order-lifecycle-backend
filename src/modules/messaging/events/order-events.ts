@@ -1,6 +1,8 @@
 /** Topic exchange carrying the order lifecycle events, and its dead-letter pair. */
 export const ORDER_EXCHANGE = 'order_lifecycle';
 export const ORDER_DLX = 'order_lifecycle.dlx';
+/** Single dead-letter queue that retains poison messages from every consumer. */
+export const ORDER_DLQ = 'order_lifecycle.dlq';
 
 /**
  * Routing keys for the order lifecycle events. Consumers bind their queues to

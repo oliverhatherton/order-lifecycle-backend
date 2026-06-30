@@ -6,6 +6,7 @@ import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMe
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import {
+  ORDER_DLQ,
   ORDER_DLX,
   ORDER_EXCHANGE,
 } from '@/modules/messaging/events/order-events';
@@ -27,6 +28,17 @@ import {
         exchanges: [
           { name: ORDER_EXCHANGE, type: 'topic' },
           { name: ORDER_DLX, type: 'topic' },
+        ],
+        // Single DLQ bound to the dead-letter exchange catches poison messages
+        // from every consumer (see createRetryErrorHandler).
+        queues: [
+          {
+            name: ORDER_DLQ,
+            exchange: ORDER_DLX,
+            routingKey: '#',
+            createQueueIfNotExists: true,
+            options: { durable: true },
+          },
         ],
         connectionInitOptions: { wait: true, timeout: 20000 },
       }),

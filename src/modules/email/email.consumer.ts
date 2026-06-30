@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
 import type { ConsumeMessage } from 'amqplib';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
+import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import {
   ORDER_DLX,
   ORDER_EXCHANGE,
@@ -26,6 +27,7 @@ export class EmailConsumer {
     routingKey: [OrderRoutingKey.Completed, OrderRoutingKey.Failed],
     queue: 'email.notifications',
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
+    errorHandler: createRetryErrorHandler('email.notifications'),
   })
   async onTerminalEvent(
     event: OrderCompletedEvent | OrderFailedEvent,

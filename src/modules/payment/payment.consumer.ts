@@ -4,6 +4,7 @@ import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import {
@@ -36,6 +37,7 @@ export class PaymentConsumer {
     routingKey: OrderRoutingKey.InventoryReserved,
     queue: 'payment.inventory_reserved',
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
+    errorHandler: createRetryErrorHandler('payment.inventory_reserved'),
   })
   async onInventoryReserved(
     event: InventoryReservedEvent,
