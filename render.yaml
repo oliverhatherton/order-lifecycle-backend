@@ -16,10 +16,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # First deploy creates the schema (no migrations yet). Flip to false once
-      # the tables exist so it can't auto-alter them later.
-      - key: DB_SYNCHRONIZE
-        value: 'true'
+        # Migrations run automatically on boot in production (migrationsRun),
+        # so there's no schema step to configure here.
       - key: DB_SSL
         value: 'false' # Render's internal DB connection doesn't need TLS
       - key: JWT_ACCESS_SECRET

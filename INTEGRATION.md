@@ -152,7 +152,6 @@ docker compose --profile observability up -d
 | --- | --- | --- |
 | `DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD` / `DB_NAME` | ✅ | Managed Postgres. |
 | `DB_SSL` | ⬜ | `true` for managed Postgres that requires TLS (Neon, Supabase). Render's internal DB: leave `false`. |
-| `DB_SYNCHRONIZE` | ⬜ | `true` on the **first** production deploy to create the schema (no migrations yet); unset it afterwards. |
 | `RABBITMQ_URL` | ✅ | e.g. `amqps://user:pass@host/vhost` (CloudAMQP). |
 | `REDIS_URL` | ✅ | e.g. `redis://:pass@host:6379` (or `rediss://...`). |
 | `JWT_ACCESS_SECRET` | ✅ | **Long random secret** — never the dev default. |
@@ -170,10 +169,24 @@ vars: set `CORS_ORIGIN=https://your-ui.example` and `COOKIE_SAMESITE=none`
 and API share an origin. The UI must send requests with credentials
 (`fetch(..., { credentials: 'include' })`).
 
-**Database schema.** Production auto-sync is off by default and there are **no
-migrations yet**, so set `DB_SYNCHRONIZE=true` for the first deploy to create
-the tables, then unset it (it can auto-alter/drop otherwise). Migrations are the
-production-grade upgrade.
+**Database schema — TypeORM migrations.** Dev auto-syncs from the entities;
+**production never does** — it runs versioned migrations
+(`src/database/migrations`) automatically on boot (`migrationsRun`), and
+`synchronize` is off. So a production deploy creates/updates its schema by
+applying pending migrations, with no manual step. Workflow:
+
+```bash
+# after changing entities, generate a migration against a dev DB:
+pnpm migration:generate          # writes src/database/migrations/<ts>-Migration.ts
+#   then add the new class to src/database/migrations/index.ts (webpack needs the
+#   explicit import; the CLI reads the same array)
+pnpm migration:run               # apply locally
+pnpm migration:revert            # roll back the last one
+pnpm migration:show              # list applied/pending
+```
+
+The CLI uses `src/database/data-source.ts` (reads the same `DB_*` env via
+dotenv). The running app applies the same list on boot in production.
 
 **Build & run.** A multi-stage [`Dockerfile`](Dockerfile) builds the app and
 ships a slim prod image (`node dist/main`); [`.dockerignore`](.dockerignore)
@@ -203,8 +216,8 @@ the web service + Postgres + Key Value (Redis) for you.
 3. When prompted, fill the `sync:false` vars: **`RABBITMQ_URL`** (the CloudAMQP
    URL), **`CORS_ORIGIN`** (your UI origin), **`COOKIE_SAMESITE`** (`none` for a
    cross-origin UI).
-4. Deploy. First boot creates the schema (`DB_SYNCHRONIZE=true`). Once it's up,
-   set `DB_SYNCHRONIZE=false` and redeploy.
+4. Deploy. On boot the app runs its TypeORM migrations automatically, creating
+   the schema — no schema step to configure.
 5. Verify: `GET https://<your-app>.onrender.com/health`, then `/docs`.
 
 **Option B — manual dashboard**
@@ -212,10 +225,10 @@ the web service + Postgres + Key Value (Redis) for you.
    connection details.
 2. **New → Web Service** → this repo → **Runtime: Docker** →
    **Health Check Path: `/health`**.
-3. Add env vars: `NODE_ENV=production`, `DB_SYNCHRONIZE=true` (first deploy),
-   `DB_SSL=false`, the five `DB_*` from the Postgres, `REDIS_URL` from Key Value,
-   `RABBITMQ_URL` (CloudAMQP), a strong `JWT_ACCESS_SECRET`, and — for a
-   cross-origin UI — `CORS_ORIGIN` + `COOKIE_SAMESITE=none`.
+3. Add env vars: `NODE_ENV=production`, `DB_SSL=false`, the five `DB_*` from the
+   Postgres, `REDIS_URL` from Key Value, `RABBITMQ_URL` (CloudAMQP), a strong
+   `JWT_ACCESS_SECRET`, and — for a cross-origin UI — `CORS_ORIGIN` +
+   `COOKIE_SAMESITE=none`. Migrations run on boot; there's no schema step.
 
 > **Free-tier caveats:** Render's free web service **sleeps after ~15 min idle**
 > (cold start on the next request — but the app also needs RabbitMQ/Redis
