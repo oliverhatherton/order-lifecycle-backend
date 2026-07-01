@@ -126,5 +126,67 @@ describe('Observability — metrics (e2e)', () => {
       expect(body.points[0].count).toBeGreaterThan(0);
       expect(body.points[0].sum).toBeGreaterThanOrEqual(0);
     });
+
+    it('omitting `from` reaches all the way back, not just a recent window', async () => {
+      const token = await registerAndLogin(ctx.app, {
+        email: 'history-since-beginning@example.com',
+      });
+      // A sample from over a year ago — well outside any of the old
+      // per-resolution lookback windows this endpoint used to default to.
+      const ancient = new Date('2020-01-01T00:00:00.000Z');
+      await ctx.dataSource.getRepository(MetricEventEntity).insert({
+        metric: 'orders_terminal',
+        value: 1,
+        labels: { state: 'completed' },
+        recordedAt: ancient,
+      });
+
+      const response = await request(ctx.app.getHttpServer())
+        .get('/metrics/history')
+        .query({ metric: 'orders_terminal', resolution: 'raw' })
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const body = response.body as MetricsHistoryResponseDTO;
+      expect(body.points.some((p) => p.bucketStart === ancient.toISOString())).toBe(
+        true,
+      );
+    });
+
+    it('caps bucketed history to the most recent buckets, not the oldest', async () => {
+      const token = await registerAndLogin(ctx.app, {
+        email: 'history-recency-cap@example.com',
+      });
+      const repository = ctx.dataSource.getRepository(MetricEventEntity);
+
+      // 550 hourly buckets — comfortably over the 500-point cap — spread
+      // from 550 hours ago up to now, oldest first.
+      const bucketCount = 550;
+      const now = Date.now();
+      const rows = Array.from({ length: bucketCount }, (_, i) => ({
+        metric: 'db_query_duration_ms',
+        value: 10,
+        labels: null,
+        recordedAt: new Date(now - (bucketCount - i) * 60 * 60 * 1000),
+      }));
+      await repository.insert(rows);
+
+      const response = await request(ctx.app.getHttpServer())
+        .get('/metrics/history')
+        .query({ metric: 'db_query_duration_ms', resolution: '1h' })
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const body = response.body as MetricsHistoryResponseDTO;
+      expect(body.points.length).toBe(500);
+      // The oldest bucket kept should be recent (within the last ~500
+      // hours), not from 550 hours ago — proving the cap kept the tail
+      // (most recent), not the head (oldest), of the history.
+      const oldestKept = new Date(body.points[0].bucketStart).getTime();
+      expect(oldestKept).toBeGreaterThan(now - 501 * 60 * 60 * 1000);
+      // The response is still chronological (ascending).
+      const timestamps = body.points.map((p) => new Date(p.bucketStart).getTime());
+      expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+    });
   });
 });

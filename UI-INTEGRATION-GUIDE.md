@@ -846,20 +846,29 @@ chart depends on the metric:
 
 ### Resolutions — why the response stays small
 
-| Resolution | Bucket width | Default window (if `from` omitted) | Typical point count |
-|---|---|---|---|
-| `raw` | none (individual samples) | last 1 hour | ≤ 500 (capped, most recent) |
-| `1h` | 1 hour | last 24 hours | ≤ 24 |
-| `6h` | 6 hours | last 7 days | ≤ 28 |
-| `12h` | 12 hours | last 14 days | ≤ 28 |
-| `1d` | 1 day | last 30 days | ≤ 30 |
-| `1w` | 1 week | last 90 days | ≤ 13 |
-| `1mo` | 30 days (fixed-width, not a calendar month) | last 365 days | ≤ 12 |
+Omitting `from` returns the **whole recorded history** — since the server
+started collecting that metric, not a rolling lookback window. Open a
+dashboard page and the first call gets everything since boot, no second
+request needed to "load more."
 
-Every resolution is additionally hard-capped at 500 points server-side
-(bucketing happens in SQL, not client-side), so the response size never grows
-with how much history has accumulated — a chart backed by a year of data
-looks the same size on the wire as one backed by a day.
+| Resolution | Bucket width | Response is capped at |
+|---|---|---|
+| `raw` | none (individual samples) | 500 samples (most recent) |
+| `1h` | 1 hour | 500 buckets |
+| `6h` | 6 hours | 500 buckets |
+| `12h` | 12 hours | 500 buckets |
+| `1d` | 1 day | 500 buckets |
+| `1w` | 1 week | 500 buckets |
+| `1mo` | 30 days (fixed-width, not a calendar month) | 500 buckets |
+
+The cap (bucketing happens in SQL, not client-side) is what makes "whole
+uptime" and "small response" compatible: a chart backed by a year of data
+looks the same size on the wire as one backed by a day — pick a coarser
+resolution (e.g. `1d` or `1w`) for a server that's been up a long time, since
+500 buckets at `1h` only covers ~3 weeks before older buckets get cut off by
+the cap (`ORDER BY bucket_start ASC LIMIT 500`, so a very long history at a
+fine resolution trims from the *end*, not the start — pass `from`/`to`
+explicitly to page through it if you need that).
 
 ### Example: a small dashboard chart
 

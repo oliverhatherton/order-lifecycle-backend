@@ -20,16 +20,16 @@ const BUCKET_SECONDS: Partial<Record<MetricResolution, number>> = {
   [MetricResolution.ONE_MONTH]: 30 * 24 * 3600,
 };
 
-/** Default lookback window (ms) applied when the caller omits `from`. */
-const DEFAULT_WINDOW_MS: Record<MetricResolution, number> = {
-  [MetricResolution.RAW]: 60 * 60 * 1000,
-  [MetricResolution.ONE_HOUR]: 24 * 60 * 60 * 1000,
-  [MetricResolution.SIX_HOURS]: 7 * 24 * 60 * 60 * 1000,
-  [MetricResolution.TWELVE_HOURS]: 14 * 24 * 60 * 60 * 1000,
-  [MetricResolution.ONE_DAY]: 30 * 24 * 60 * 60 * 1000,
-  [MetricResolution.ONE_WEEK]: 90 * 24 * 60 * 60 * 1000,
-  [MetricResolution.ONE_MONTH]: 365 * 24 * 60 * 60 * 1000,
-};
+/**
+ * Sentinel "since the beginning" bound used when the caller omits `from` —
+ * deliberately not a rolling lookback window. The intent is "open the page
+ * and instantly see the whole time the server has been up," so the default
+ * has to reach back to the first ever recorded sample, not just the last N
+ * hours/days. Response size is still bounded (see MAX_POINTS below): raw
+ * takes the most recent 500 samples, bucketed resolutions cap at 500
+ * buckets — so an unbounded start doesn't risk an unbounded response.
+ */
+const SINCE_THE_BEGINNING = new Date(0);
 
 /** Hard cap on rows/buckets returned, regardless of the requested window. */
 const MAX_POINTS = 500;
@@ -49,12 +49,13 @@ interface BucketRow {
 }
 
 /**
- * Answers `GET /metrics/history`. `raw` returns the most recent samples
- * (capped at MAX_POINTS); every other resolution groups samples into
- * fixed-width buckets in the database (cheaper and smaller than shipping
- * every sample to bucket client-side) and is itself capped at MAX_POINTS
- * buckets, so the response size never depends on how much history has
- * accumulated.
+ * Answers `GET /metrics/history`. Defaults to the whole recorded history (no
+ * `from` means "since the server started collecting this metric," not a
+ * rolling window) — `raw` returns the most recent samples (capped at
+ * MAX_POINTS); every other resolution groups samples into fixed-width
+ * buckets in the database (cheaper and smaller than shipping every sample to
+ * bucket client-side) and is itself capped at MAX_POINTS buckets, so the
+ * response size never depends on how much history has accumulated.
  */
 @Injectable()
 export class MetricsHistoryService {
@@ -66,9 +67,7 @@ export class MetricsHistoryService {
   async query(dto: MetricsHistoryQueryDTO): Promise<MetricsHistoryResponseDTO> {
     const resolution = dto.resolution ?? MetricResolution.RAW;
     const to = dto.to ? new Date(dto.to) : new Date();
-    const from = dto.from
-      ? new Date(dto.from)
-      : new Date(to.getTime() - DEFAULT_WINDOW_MS[resolution]);
+    const from = dto.from ? new Date(dto.from) : SINCE_THE_BEGINNING;
 
     const points =
       resolution === MetricResolution.RAW
@@ -114,19 +113,26 @@ export class MetricsHistoryService {
   ): Promise<MetricHistoryPointDTO[]> {
     const widthSeconds = BUCKET_SECONDS[resolution]!;
 
+    // Bucket, then take the MOST RECENT MAX_POINTS buckets (inner query,
+    // DESC + LIMIT) before re-sorting chronologically for the response.
+    // Ordering ASC before LIMIT would keep the *oldest* buckets instead —
+    // exactly backwards once `from` can span a long, unbounded history.
     const rows: BucketRow[] = await this.repository.query(
-      `SELECT
-         to_timestamp(floor(extract(epoch from "recordedAt") / $4) * $4) AS bucket_start,
-         COUNT(*) AS count,
-         SUM("value") AS sum,
-         AVG("value") AS avg,
-         MIN("value") AS min,
-         MAX("value") AS max
-       FROM "metric_events"
-       WHERE "metric" = $1 AND "recordedAt" >= $2 AND "recordedAt" <= $3
-       GROUP BY bucket_start
-       ORDER BY bucket_start ASC
-       LIMIT ${MAX_POINTS}`,
+      `SELECT * FROM (
+         SELECT
+           to_timestamp(floor(extract(epoch from "recordedAt") / $4) * $4) AS bucket_start,
+           COUNT(*) AS count,
+           SUM("value") AS sum,
+           AVG("value") AS avg,
+           MIN("value") AS min,
+           MAX("value") AS max
+         FROM "metric_events"
+         WHERE "metric" = $1 AND "recordedAt" >= $2 AND "recordedAt" <= $3
+         GROUP BY bucket_start
+         ORDER BY bucket_start DESC
+         LIMIT ${MAX_POINTS}
+       ) recent_buckets
+       ORDER BY bucket_start ASC`,
       [metric, from, to, widthSeconds],
     );
 

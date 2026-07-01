@@ -31,8 +31,11 @@ export class MetricsHistoryController {
     summary: 'Durable, resolution-bucketed metric history',
     description:
       'Backed by a Postgres table (`metric_events`), not the in-memory ' +
-      'Prometheus registry — history survives a restart. `resolution=raw` ' +
-      'returns individual samples (capped at 500, most recent window); ' +
+      'Prometheus registry — history survives a restart. Omitting `from` ' +
+      'returns the whole recorded history (since the server started ' +
+      'collecting this metric), not a rolling window — open the page and ' +
+      'get everything since boot in one call. `resolution=raw` returns ' +
+      'individual samples (capped at the 500 most recent); ' +
       '1h/6h/12h/1d/1w/1mo group samples into buckets of that width so the ' +
       'response size never depends on how much history has accumulated.',
   })

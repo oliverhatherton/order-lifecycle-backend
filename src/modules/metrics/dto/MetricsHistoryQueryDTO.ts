@@ -20,7 +20,7 @@ export class MetricsHistoryQueryDTO {
     required: false,
     default: MetricResolution.RAW,
     description:
-      '`raw` returns individual samples (capped, most recent window). Any ' +
+      '`raw` returns individual samples (capped at the 500 most recent). Any ' +
       'other value groups samples into fixed-width buckets of that size.',
   })
   @IsOptional()
@@ -30,7 +30,11 @@ export class MetricsHistoryQueryDTO {
   @ApiProperty({
     required: false,
     description:
-      'ISO-8601 start of the window (inclusive). Defaults per resolution.',
+      'ISO-8601 start of the window (inclusive). Omit to get the whole ' +
+      'recorded history (since the server started collecting this metric) — ' +
+      'not a rolling lookback window. The response still stays small: `raw` ' +
+      'returns at most the 500 most recent samples, and every bucketed ' +
+      'resolution caps at 500 buckets regardless of how far back this goes.',
   })
   @IsOptional()
   @IsISO8601()
