@@ -74,11 +74,14 @@ revokes the whole family (theft detection).
 { "id": "uuid", "email": "user@example.com", "role": "USER", "disabled": false, "createdAt": "2026-07-01T..." }
 
 // OrderResponseDTO
-{ "id": "uuid", "userId": "uuid", "status": "PENDING", "createdAt": "...", "updatedAt": "..." }
+{ "id": "uuid", "userId": "uuid", "status": "PENDING", "paymentInitiatedAt": null, "createdAt": "...", "updatedAt": "..." }
 ```
 
 Order `status` moves through the state machine:
 `PENDING → RESERVED → PAID → COMPLETED`, or `PENDING/RESERVED → FAILED`.
+`RESERVED` is a genuine pause, not a transient state — nothing advances the
+order further until the caller calls `POST /orders/{id}/pay` (see below).
+`paymentInitiatedAt` is null until that call succeeds.
 
 ---
 
@@ -98,21 +101,30 @@ Order `status` moves through the state machine:
    is sent/stored. (`fetch(url, { credentials: 'include' })` /
    `axios: { withCredentials: true }`.)
 
-**Placing and tracking an order (fulfilment is asynchronous!)**
+**Placing and tracking an order (fulfilment is asynchronous, with one manual gate!)**
 
-`POST /orders` returns immediately with `status: "PENDING"`. Inventory →
-payment → completion happen over RabbitMQ afterwards. The UI must **poll**
-`GET /orders/:id` (e.g. every ~1s for a few seconds) and reflect the status as
-it advances to `COMPLETED`, or show the failure if it lands on `FAILED`. There
-is no push/websocket channel — poll, or optimistically show a "processing"
-state and refresh.
+`POST /orders` returns immediately with `status: "PENDING"`. Inventory
+reservation happens over RabbitMQ and lands the order in `RESERVED` — then it
+**stops**. Nothing pays, completes, or fails the order until the UI calls
+`POST /orders/{id}/pay` (the simulated "Pay" button). Only after that does
+payment authorization → completion resume asynchronously. The UI must **poll**
+`GET /orders/:id` (e.g. every ~1s for a few seconds), stop polling once it sees
+`RESERVED` (show the Pay button), call the pay endpoint on click, then resume
+polling until `COMPLETED` or `FAILED`. There is no push/websocket channel —
+poll, or optimistically show a "processing" state and refresh.
 
 ```
-POST /orders            -> { id, status: "PENDING" }
-GET  /orders/{id}  (t+1) -> { status: "RESERVED" }
-GET  /orders/{id}  (t+2) -> { status: "PAID" }
-GET  /orders/{id}  (t+3) -> { status: "COMPLETED" }   // terminal
+POST /orders                 -> { id, status: "PENDING" }
+GET  /orders/{id}      (t+1) -> { status: "RESERVED" }        // pauses here — poll stops, show "Pay"
+POST /orders/{id}/pay  (t+N) -> { status: "RESERVED", paymentInitiatedAt: "..." }  // resumes fulfilment
+GET  /orders/{id}    (t+N+1) -> { status: "PAID" }
+GET  /orders/{id}    (t+N+2) -> { status: "COMPLETED" }   // terminal
 ```
+
+The pay endpoint is idempotent (atomic claim in Postgres, keyed on
+`paymentInitiatedAt IS NULL`): a double-click gets a `409` on the second call,
+not a duplicate charge. Treat `409` there as "nothing to do," not an error to
+surface.
 
 **Correlation IDs (nice-to-have for debugging):** send an `x-correlation-id`
 header and it is echoed on the response and stamped across every log/trace for

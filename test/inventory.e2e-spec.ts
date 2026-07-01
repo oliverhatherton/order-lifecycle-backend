@@ -13,10 +13,7 @@ import {
   ORDER_EXCHANGE,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
-import type {
-  InventoryReservedEvent,
-  OrderCreatedEvent,
-} from '@/modules/messaging/events/order-events';
+import type { OrderCreatedEvent } from '@/modules/messaging/events/order-events';
 import { registerAndLogin, setupE2eTest, waitFor } from '@test/support/e2e';
 
 describe('Inventory consumer (e2e)', () => {
@@ -32,33 +29,7 @@ describe('Inventory consumer (e2e)', () => {
     rabbitmq: true,
   });
 
-  it('reserves inventory: OrderCreated → order RESERVED → InventoryReserved', async () => {
-    const amqp = ctx.app.get(AmqpConnection);
-
-    // Capture the InventoryReserved the consumer will emit.
-    const { queue } = await amqp.channel.assertQueue('', {
-      exclusive: true,
-      autoDelete: true,
-    });
-    await amqp.channel.bindQueue(
-      queue,
-      ORDER_EXCHANGE,
-      OrderRoutingKey.InventoryReserved,
-    );
-    const reserved = new Promise<InventoryReservedEvent>((resolve) => {
-      void amqp.channel.consume(
-        queue,
-        (msg) => {
-          if (msg) {
-            resolve(
-              JSON.parse(msg.content.toString()) as InventoryReservedEvent,
-            );
-          }
-        },
-        { noAck: true },
-      );
-    });
-
+  it('reserves inventory: OrderCreated → order RESERVED, then pauses (no auto-publish)', async () => {
     const token = await registerAndLogin(ctx.app);
     const created = await request(ctx.app.getHttpServer())
       .post('/orders')
@@ -66,9 +37,16 @@ describe('Inventory consumer (e2e)', () => {
       .expect(201);
     const { id } = created.body as OrderResponseDTO;
 
-    const event = await reserved;
-    expect(event.orderId).toBe(id);
+    await waitFor(async () => {
+      const order = await ctx.dataSource
+        .getRepository(OrderEntity)
+        .findOneByOrFail({ id });
+      return order.status === OrderStatus.RESERVED;
+    });
 
+    // Confirms the pause: the order sits in RESERVED and never advances on
+    // its own — resuming the chain now requires POST /orders/:id/pay.
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const order = await ctx.dataSource
       .getRepository(OrderEntity)
       .findOneByOrFail({ id });

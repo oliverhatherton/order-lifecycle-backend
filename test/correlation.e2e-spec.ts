@@ -2,11 +2,13 @@ import request from 'supertest';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
-import { InventoryModule } from '@/modules/inventory/inventory.module';
+import { OrdersService } from '@/modules/orders/services/orders.service';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
+import { OrderStatus } from '@/entities/order/OrderStatus';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   ORDER_EXCHANGE,
   OrderRoutingKey,
@@ -17,8 +19,9 @@ const CORRELATION_HEADER = 'x-correlation-id';
 
 /**
  * Proves Story 5.2: a request adopts/echoes a correlation id, and the id rides
- * across the broker so a downstream consumer continues the same trace — here the
- * inventory consumer re-publishes InventoryReserved carrying the original id.
+ * across the broker so a downstream consumer continues the same trace — here
+ * confirming payment (POST /orders/:id/pay) re-publishes the InventoryReserved
+ * / payment-confirmed event carrying the id from that request.
  */
 describe('Correlation IDs (e2e)', () => {
   const ctx = setupE2eTest({
@@ -28,7 +31,7 @@ describe('Correlation IDs (e2e)', () => {
       OrderEntity,
       ProcessedMessageEntity,
     ],
-    imports: [AuthModule, OrdersModule, InventoryModule],
+    imports: [AuthModule, OrdersModule],
     truncate: ['processed_messages', 'orders', 'refresh_tokens', 'users'],
     rabbitmq: true,
   });
@@ -65,17 +68,24 @@ describe('Correlation IDs (e2e)', () => {
 
   it('echoes a supplied correlation id and propagates it across the broker', async () => {
     const token = await registerAndLogin(ctx.app);
+    const created = await request(ctx.app.getHttpServer())
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+    const { id } = created.body as OrderResponseDTO;
+    await ctx.app.get(OrdersService).transitionOrder(id, OrderStatus.RESERVED);
+
     const queue = await bindReservedQueue();
 
     const correlationId = 'cid-e2e-abc';
     const response = await request(ctx.app.getHttpServer())
-      .post('/orders')
+      .post(`/orders/${id}/pay`)
       .set('Authorization', `Bearer ${token}`)
       .set(CORRELATION_HEADER, correlationId)
-      .expect(201);
+      .expect(200);
 
     expect(response.headers[CORRELATION_HEADER]).toBe(correlationId);
-    // The inventory consumer re-entered the same context and kept the id.
+    // The publish inside the pay request carried the same id.
     await expect(correlationIdOn(queue)).resolves.toBe(correlationId);
   });
 

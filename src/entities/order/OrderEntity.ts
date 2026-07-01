@@ -35,6 +35,13 @@ export class OrderEntity {
   @Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.PENDING })
   status: OrderStatus = OrderStatus.PENDING;
 
+  // Set the instant the caller confirms payment on a RESERVED order (see
+  // OrdersService.initiatePayment). Doubles as an idempotency guard: the
+  // atomic claim UPDATE only succeeds while this is NULL, so a double-click
+  // on "Pay" can't fire the payment event twice.
+  @Column({ type: 'timestamptz', nullable: true })
+  paymentInitiatedAt: Date | null = null;
+
   @CreateDateColumn()
   createdAt: Date;
 

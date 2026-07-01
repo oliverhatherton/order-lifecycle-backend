@@ -14,6 +14,7 @@ describe('OrdersController', () => {
     createOrder: jest.fn(),
     listOrdersForUser: jest.fn(),
     getOrderForUser: jest.fn(),
+    initiatePayment: jest.fn(),
   };
 
   const caller: JwtPayload = { sub: 'user-1', role: UserRole.USER };
@@ -45,6 +46,7 @@ describe('OrdersController', () => {
       id: order.id,
       userId: order.userId,
       status: OrderStatus.PENDING,
+      paymentInitiatedAt: null,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     });
@@ -64,6 +66,7 @@ describe('OrdersController', () => {
         id: order.id,
         userId: order.userId,
         status: order.status,
+        paymentInitiatedAt: null,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
       },
@@ -84,5 +87,23 @@ describe('OrdersController', () => {
       caller.sub,
     );
     expect(result.id).toBe('order-1');
+  });
+
+  it('confirms payment via the service and returns the (still RESERVED) order', async () => {
+    const order = OrderEntityMother.create({
+      id: 'order-1',
+      userId: caller.sub,
+      status: OrderStatus.RESERVED,
+    });
+    ordersServiceMock.initiatePayment.mockResolvedValue(order);
+
+    const result = await controller.pay('order-1', caller);
+
+    expect(ordersServiceMock.initiatePayment).toHaveBeenCalledWith(
+      'order-1',
+      caller.sub,
+    );
+    expect(result.id).toBe('order-1');
+    expect(result.status).toBe(OrderStatus.RESERVED);
   });
 });

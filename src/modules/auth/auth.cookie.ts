@@ -1,6 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { CookieOptions } from 'express';
-import { DAY_IN_MS, REFRESH_TOKEN_COOKIE_PATH, REFRESH_TOKEN_TTL_DEFAULT_DAYS, } from '@/modules/auth/auth.constants';
+import {
+  DAY_IN_MS,
+  REFRESH_TOKEN_COOKIE_PATH,
+  REFRESH_TOKEN_TTL_DEFAULT_DAYS,
+} from '@/modules/auth/auth.constants';
 
 /**
  * Builds the attributes for the refresh-token cookie. `httpOnly` keeps it out

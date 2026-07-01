@@ -43,20 +43,59 @@ export const dbQueryDuration = new Histogram({
   buckets: DURATION_BUCKETS,
 });
 
+/**
+ * Sink for durable metric history, set once at boot by
+ * MetricsPersistenceService.onModuleInit. Optional by design: this module has
+ * no Nest DI, so persistence is wired in via this settable reference rather
+ * than a constructor — and every collector below degrades to
+ * Prometheus-only (in-memory) if it's never set, e.g. in unit tests.
+ */
+export interface MetricsSink {
+  record(metric: string, value: number, labels?: Record<string, string>): void;
+}
+
+let sink: MetricsSink | undefined;
+
+/** Wires a durable sink into the collectors below. Call once, at boot. */
+export function setMetricsSink(newSink: MetricsSink | undefined): void {
+  sink = newSink;
+}
+
+/**
+ * Records one sample directly against the durable sink, for call sites (like
+ * HttpMetricsInterceptor) that already own a prom-client collector and just
+ * need the matching history row.
+ */
+export function recordMetricSample(
+  metric: string,
+  value: number,
+  labels?: Record<string, string>,
+): void {
+  sink?.record(metric, value, labels);
+}
+
 export function recordConsumerOutcome(
   consumer: string,
   outcome: ConsumerOutcome,
 ): void {
   consumerMessagesTotal.inc({ consumer, outcome });
+  sink?.record('consumer_messages', 1, { consumer, outcome });
 }
 
 /** Starts a processing-duration timer for a consumer; call the result when done. */
 export function startConsumerTimer(consumer: string): () => void {
-  return consumerProcessingDuration.startTimer({ consumer });
+  const stop = consumerProcessingDuration.startTimer({ consumer });
+  return () => {
+    const seconds = stop();
+    sink?.record('consumer_processing_duration_ms', seconds * 1000, {
+      consumer,
+    });
+  };
 }
 
 export function recordTerminalState(state: 'completed' | 'failed'): void {
   ordersTerminalTotal.inc({ state });
+  sink?.record('orders_terminal', 1, { state });
 }
 
 /** Times a database operation, recording its duration regardless of outcome. */
@@ -65,5 +104,8 @@ export function timeDb<T>(
   work: () => Promise<T>,
 ): Promise<T> {
   const stop = dbQueryDuration.startTimer({ operation });
-  return work().finally(stop);
+  return work().finally(() => {
+    const seconds = stop();
+    sink?.record('db_query_duration_ms', seconds * 1000, { operation });
+  });
 }

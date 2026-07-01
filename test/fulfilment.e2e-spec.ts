@@ -92,13 +92,22 @@ describe('Order fulfilment chain (e2e)', () => {
     return { event };
   }
 
-  async function createOrder(): Promise<string> {
+  async function createOrder(): Promise<{ id: string; token: string }> {
     const token = await registerAndLogin(ctx.app);
     const created = await request(ctx.app.getHttpServer())
       .post('/orders')
       .set('Authorization', `Bearer ${token}`)
       .expect(201);
-    return (created.body as OrderResponseDTO).id;
+    return { id: (created.body as OrderResponseDTO).id, token };
+  }
+
+  /** Waits for RESERVED, then confirms payment — the UI's "Pay" click. */
+  async function pay(id: string, token: string): Promise<void> {
+    await waitFor(async () => (await orderStatus(id)) === OrderStatus.RESERVED);
+    await request(ctx.app.getHttpServer())
+      .post(`/orders/${id}/pay`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
   }
 
   it('drives the full happy path to COMPLETED, emits OrderCompleted, and notifies once', async () => {
@@ -106,7 +115,8 @@ describe('Order fulfilment chain (e2e)', () => {
       OrderRoutingKey.Completed,
     );
 
-    const id = await createOrder();
+    const { id, token } = await createOrder();
+    await pay(id, token);
 
     await waitFor(
       async () => (await orderStatus(id)) === OrderStatus.COMPLETED,
@@ -129,7 +139,8 @@ describe('Order fulfilment chain (e2e)', () => {
       OrderRoutingKey.Failed,
     );
 
-    const id = await createOrder();
+    const { id, token } = await createOrder();
+    await pay(id, token);
 
     await waitFor(async () => (await orderStatus(id)) === OrderStatus.FAILED, {
       timeoutMs: 20000,

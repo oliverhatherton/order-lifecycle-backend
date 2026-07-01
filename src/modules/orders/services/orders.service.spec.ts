@@ -13,11 +13,20 @@ import { OrderEntityMother } from '@/entities/order/mother/OrderEntityMother';
 describe('OrdersService', () => {
   let service: OrdersService;
 
+  const queryBuilderMock = {
+    update: jest.fn(),
+    set: jest.fn(),
+    where: jest.fn(),
+    andWhere: jest.fn(),
+    execute: jest.fn(),
+  };
+
   const repositoryMock = {
     create: jest.fn(),
     save: jest.fn(),
     findOneBy: jest.fn(),
     find: jest.fn(),
+    createQueryBuilder: jest.fn(() => queryBuilderMock),
   };
 
   const publisherMock = {
@@ -31,6 +40,11 @@ describe('OrdersService', () => {
   };
 
   beforeEach(async () => {
+    queryBuilderMock.update.mockReturnValue(queryBuilderMock);
+    queryBuilderMock.set.mockReturnValue(queryBuilderMock);
+    queryBuilderMock.where.mockReturnValue(queryBuilderMock);
+    queryBuilderMock.andWhere.mockReturnValue(queryBuilderMock);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrdersService,
@@ -277,6 +291,74 @@ describe('OrdersService', () => {
       await expect(
         service.transitionOrder('missing', OrderStatus.RESERVED),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('initiatePayment', () => {
+    it('claims a RESERVED order and publishes the payment-confirmed event', async () => {
+      const order = OrderEntityMother.create({
+        id: 'order-1',
+        userId: 'user-1',
+        status: OrderStatus.RESERVED,
+      });
+      cacheMock.get.mockResolvedValue(undefined);
+      repositoryMock.findOneBy.mockResolvedValue(order);
+      queryBuilderMock.execute.mockResolvedValue({ affected: 1 });
+      publisherMock.publish.mockResolvedValue(undefined);
+
+      const result = await service.initiatePayment('order-1', 'user-1');
+
+      expect(queryBuilderMock.where).toHaveBeenCalledWith('id = :id', {
+        id: 'order-1',
+      });
+      expect(publisherMock.publish).toHaveBeenCalledWith(
+        OrderRoutingKey.InventoryReserved,
+        expect.objectContaining({ orderId: 'order-1', userId: 'user-1' }),
+      );
+      expect(result.paymentInitiatedAt).toBeInstanceOf(Date);
+      expect(cacheMock.del).toHaveBeenCalledWith('order:order-1');
+    });
+
+    it('throws ConflictException without claiming when the order is not RESERVED', async () => {
+      const order = OrderEntityMother.create({
+        id: 'order-1',
+        userId: 'user-1',
+        status: OrderStatus.PENDING,
+      });
+      cacheMock.get.mockResolvedValue(undefined);
+      repositoryMock.findOneBy.mockResolvedValue(order);
+
+      await expect(
+        service.initiatePayment('order-1', 'user-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(queryBuilderMock.execute).not.toHaveBeenCalled();
+      expect(publisherMock.publish).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when a concurrent claim already won (affected 0)', async () => {
+      const order = OrderEntityMother.create({
+        id: 'order-1',
+        userId: 'user-1',
+        status: OrderStatus.RESERVED,
+      });
+      cacheMock.get.mockResolvedValue(undefined);
+      repositoryMock.findOneBy.mockResolvedValue(order);
+      queryBuilderMock.execute.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.initiatePayment('order-1', 'user-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(publisherMock.publish).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException for an order the caller does not own', async () => {
+      cacheMock.get.mockResolvedValue(undefined);
+      repositoryMock.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.initiatePayment('order-1', 'someone-else'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(queryBuilderMock.execute).not.toHaveBeenCalled();
     });
   });
 });

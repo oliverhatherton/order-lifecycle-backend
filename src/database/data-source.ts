@@ -6,6 +6,7 @@ import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity'
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
+import { MetricEventEntity } from '@/entities/metric-event/MetricEventEntity';
 import { migrations } from '@/database/migrations';
 
 // Standalone DataSource for the TypeORM CLI (migration generate/run/revert).
@@ -28,6 +29,7 @@ const AppDataSource = new DataSource({
     OrderEntity,
     ProcessedMessageEntity,
     PaymentAuthorizationEntity,
+    MetricEventEntity,
   ],
   migrations,
   synchronize: false,

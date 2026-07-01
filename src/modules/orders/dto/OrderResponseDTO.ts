@@ -13,6 +13,17 @@ export class OrderResponseDTO {
   @ApiProperty({ enum: OrderStatus, example: OrderStatus.PENDING })
   status: OrderStatus;
 
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    description:
+      'When the caller confirmed payment (POST /orders/{id}/pay). Null while ' +
+      'RESERVED and awaiting payment; set once payment has been triggered, ' +
+      'even if the order later fails.',
+  })
+  paymentInitiatedAt: Date | null;
+
   @ApiProperty()
   createdAt: Date;
 
@@ -26,6 +37,7 @@ export function toOrderResponseDTO(order: OrderEntity): OrderResponseDTO {
     id: order.id,
     userId: order.userId,
     status: order.status,
+    paymentInitiatedAt: order.paymentInitiatedAt,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
   };

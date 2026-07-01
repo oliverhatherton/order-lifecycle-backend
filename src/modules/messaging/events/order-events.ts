@@ -24,7 +24,13 @@ export interface OrderCreatedEvent {
   occurredAt: string;
 }
 
-/** Published when inventory has been reserved for an order (now RESERVED). */
+/**
+ * Published when the caller confirms payment on a RESERVED order (the
+ * simulated "Pay" action — see OrdersService.initiatePayment). Named for the
+ * inventory-reserved milestone it originally followed automatically; now it
+ * doubles as the payment-confirmed signal PaymentConsumer waits for, since
+ * inventory reservation itself no longer auto-publishes.
+ */
 export interface InventoryReservedEvent {
   orderId: string;
   userId: string;

@@ -17,6 +17,7 @@ import {
   timeDb,
 } from '@/modules/metrics/metrics.collectors';
 import {
+  InventoryReservedEvent,
   OrderCreatedEvent,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
@@ -174,6 +175,69 @@ export class OrdersService {
     await this.cache.del(orderKey(orderId), userOrdersKey(order.userId));
 
     return saved;
+  }
+
+  /**
+   * Confirms payment on a RESERVED order the user owns — the "Pay" button in
+   * the UI. Inventory reservation no longer auto-advances the order; it sits
+   * in RESERVED until this is called, then publishes the same event
+   * PaymentConsumer already listens for, resuming the async chain
+   * (authorize → PAID/FAILED → COMPLETED).
+   *
+   * The status/claim check is a single atomic `UPDATE ... WHERE status =
+   * RESERVED AND paymentInitiatedAt IS NULL`, so two concurrent calls (e.g. a
+   * double-click) can only ever have one publish the event — the loser sees
+   * `affected === 0` and gets a 409, not a duplicate payment attempt.
+   */
+  async initiatePayment(orderId: string, userId: string): Promise<OrderEntity> {
+    // 404s if the order doesn't exist or isn't the caller's.
+    const order = await this.getOrderForUser(orderId, userId);
+    if (order.status !== OrderStatus.RESERVED) {
+      throw new ConflictException(
+        `Order is not awaiting payment (status: ${order.status})`,
+      );
+    }
+
+    const claim = await timeDb('order.claimPayment', () =>
+      this.orderRepository
+        .createQueryBuilder()
+        .update(OrderEntity)
+        .set({ paymentInitiatedAt: () => 'now()' })
+        .where('id = :id', { id: orderId })
+        .andWhere('status = :status', { status: OrderStatus.RESERVED })
+        .andWhere('"paymentInitiatedAt" IS NULL')
+        .execute(),
+    );
+    if (claim.affected === 0) {
+      throw new ConflictException(
+        'Payment has already been initiated for this order',
+      );
+    }
+    order.paymentInitiatedAt = new Date();
+
+    // Publish-after-claim, same fail-open policy as createOrder: the claim is
+    // durable even if the broker is briefly unavailable, at the cost of a
+    // stuck order needing reconciliation (no outbox yet).
+    const event: InventoryReservedEvent = {
+      orderId: order.id,
+      userId: order.userId,
+      occurredAt: new Date().toISOString(),
+    };
+    try {
+      await this.eventPublisher.publish(
+        OrderRoutingKey.InventoryReserved,
+        event,
+      );
+      this.logger.log(`Payment confirmed by caller for order ${order.id}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to publish payment-confirmed event for order ${order.id}`,
+        error as Error,
+      );
+    }
+
+    await this.cache.del(orderKey(orderId));
+    return order;
   }
 }
 

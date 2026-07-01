@@ -68,13 +68,22 @@ describe('Resilience (e2e)', () => {
     return info.messageCount;
   }
 
-  async function createOrder(): Promise<string> {
+  async function createOrder(): Promise<{ id: string; token: string }> {
     const token = await registerAndLogin(ctx.app);
     const created = await request(ctx.app.getHttpServer())
       .post('/orders')
       .set('Authorization', `Bearer ${token}`)
       .expect(201);
-    return (created.body as OrderResponseDTO).id;
+    return { id: (created.body as OrderResponseDTO).id, token };
+  }
+
+  /** Waits for RESERVED, then confirms payment — the UI's "Pay" click. */
+  async function pay(id: string, token: string): Promise<void> {
+    await waitFor(async () => (await orderStatus(id)) === OrderStatus.RESERVED);
+    await request(ctx.app.getHttpServer())
+      .post(`/orders/${id}/pay`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
   }
 
   it('retries a poison message a bounded number of times, then dead-letters it to the DLQ', async () => {
@@ -82,7 +91,8 @@ describe('Resilience (e2e)', () => {
     // processed and should end up in the DLQ after the bounded retries.
     gatewayMock.authorize.mockRejectedValue(new Error('gateway exploded'));
 
-    const id = await createOrder();
+    const { id, token } = await createOrder();
+    await pay(id, token);
 
     await waitFor(async () => (await dlqDepth()) >= 1, { timeoutMs: 20000 });
 
@@ -98,7 +108,8 @@ describe('Resilience (e2e)', () => {
       .mockRejectedValueOnce(new Error('transient blip'))
       .mockResolvedValue({ authorized: true });
 
-    const id = await createOrder();
+    const { id, token } = await createOrder();
+    await pay(id, token);
 
     await waitFor(
       async () => (await orderStatus(id)) === OrderStatus.COMPLETED,

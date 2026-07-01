@@ -1,4 +1,5 @@
 import { InitialSchema1782896581863 } from '@/database/migrations/1782896581863-InitialSchema';
+import { AddMetricEventsAndPaymentInitiatedAt1782907200000 } from '@/database/migrations/1782907200000-AddMetricEventsAndPaymentInitiatedAt';
 
 /**
  * Explicit list of migrations for the running app. Referenced by class (not a
@@ -6,4 +7,7 @@ import { InitialSchema1782896581863 } from '@/database/migrations/1782896581863-
  * The TypeORM CLI uses its own glob in data-source.ts. Append new migrations
  * here as they are generated.
  */
-export const migrations = [InitialSchema1782896581863];
+export const migrations = [
+  InitialSchema1782896581863,
+  AddMetricEventsAndPaymentInitiatedAt1782907200000,
+];

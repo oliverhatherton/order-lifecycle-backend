@@ -10,6 +10,7 @@ import type { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { HTTP_REQUEST_DURATION_SECONDS } from '@/modules/metrics/metrics.constants';
+import { recordMetricSample } from '@/modules/metrics/metrics.collectors';
 
 /**
  * Records request latency into the `http_request_duration_seconds` histogram.
@@ -32,7 +33,13 @@ export class HttpMetricsInterceptor implements NestInterceptor {
     const stop = this.histogram.startTimer();
 
     const observe = (statusCode: number): void => {
-      stop({ method, route: routePattern(request), status_code: statusCode });
+      const route = routePattern(request);
+      const seconds = stop({ method, route, status_code: statusCode });
+      recordMetricSample('http_request_duration_ms', seconds * 1000, {
+        method,
+        route,
+        status_code: String(statusCode),
+      });
     };
 
     return next.handle().pipe(

@@ -96,6 +96,15 @@ describe('Consumer & DB metrics (e2e)', () => {
     return order?.status;
   }
 
+  /** Waits for RESERVED, then confirms payment — the UI's "Pay" click. */
+  async function pay(id: string, token: string): Promise<void> {
+    await waitFor(async () => (await orderStatus(id)) === OrderStatus.RESERVED);
+    await request(ctx.app.getHttpServer())
+      .post(`/orders/${id}/pay`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+  }
+
   it('counts per-consumer processing, a completed order and DB queries', async () => {
     const token = await registerAndLogin(ctx.app);
     const inventoryBefore = await counterValue(consumerMessagesTotal, {
@@ -108,6 +117,7 @@ describe('Consumer & DB metrics (e2e)', () => {
     const dbBefore = await dbQueryCount();
 
     const id = await createOrder(token);
+    await pay(id, token);
     await waitFor(
       async () => (await orderStatus(id)) === OrderStatus.COMPLETED,
     );
@@ -138,6 +148,7 @@ describe('Consumer & DB metrics (e2e)', () => {
     });
 
     const id = await createOrder(token);
+    await pay(id, token);
     await waitFor(async () => (await orderStatus(id)) === OrderStatus.FAILED);
 
     const failedAfter = await counterValue(ordersTerminalTotal, {

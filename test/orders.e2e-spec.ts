@@ -2,6 +2,7 @@ import request from 'supertest';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
+import { OrdersService } from '@/modules/orders/services/orders.service';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
@@ -9,6 +10,7 @@ import { OrderStatus } from '@/entities/order/OrderStatus';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
+  InventoryReservedEvent,
   ORDER_EXCHANGE,
   OrderCreatedEvent,
   OrderRoutingKey,
@@ -197,6 +199,114 @@ describe('OrdersController (e2e)', () => {
     it('rejects an anonymous request with 401', async () => {
       await request(ctx.app.getHttpServer())
         .get('/orders/00000000-0000-0000-0000-000000000000')
+        .expect(401);
+    });
+  });
+
+  describe('POST /orders/:id/pay', () => {
+    it('confirms payment on a RESERVED order and publishes the payment-confirmed event', async () => {
+      const token = await registerAndLogin(ctx.app);
+      const created = await request(ctx.app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const { id } = created.body as OrderResponseDTO;
+      await ctx.app
+        .get(OrdersService)
+        .transitionOrder(id, OrderStatus.RESERVED);
+
+      const amqp = ctx.app.get(AmqpConnection);
+      const { queue } = await amqp.channel.assertQueue('', {
+        exclusive: true,
+        autoDelete: true,
+      });
+      await amqp.channel.bindQueue(
+        queue,
+        ORDER_EXCHANGE,
+        OrderRoutingKey.InventoryReserved,
+      );
+      const published = new Promise<InventoryReservedEvent>((resolve) => {
+        void amqp.channel.consume(
+          queue,
+          (msg) => {
+            if (msg) {
+              resolve(
+                JSON.parse(msg.content.toString()) as InventoryReservedEvent,
+              );
+            }
+          },
+          { noAck: true },
+        );
+      });
+
+      const response = await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/pay`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const body = response.body as OrderResponseDTO;
+      expect(body.status).toBe(OrderStatus.RESERVED);
+      expect(body.paymentInitiatedAt).toBeDefined();
+      expect((await published).orderId).toBe(id);
+    });
+
+    it('rejects a pay on a PENDING order (not yet RESERVED) with 409', async () => {
+      const token = await registerAndLogin(ctx.app);
+      const created = await request(ctx.app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const { id } = created.body as OrderResponseDTO;
+
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/pay`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+
+    it('rejects a second pay on the same order with 409 (double-click guard)', async () => {
+      const token = await registerAndLogin(ctx.app);
+      const created = await request(ctx.app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const { id } = created.body as OrderResponseDTO;
+      await ctx.app
+        .get(OrdersService)
+        .transitionOrder(id, OrderStatus.RESERVED);
+
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/pay`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/pay`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+
+    it("returns 404 for another user's order", async () => {
+      const ownerToken = await registerAndLogin(ctx.app, {
+        email: 'pay-owner@example.com',
+      });
+      const created = await request(ctx.app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .expect(201);
+      const { id } = created.body as OrderResponseDTO;
+
+      const otherToken = await registerAndLogin(ctx.app, {
+        email: 'pay-other@example.com',
+      });
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/pay`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(404);
+    });
+
+    it('rejects an anonymous request with 401', async () => {
+      await request(ctx.app.getHttpServer())
+        .post('/orders/00000000-0000-0000-0000-000000000000/pay')
         .expect(401);
     });
   });

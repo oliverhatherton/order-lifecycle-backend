@@ -3,19 +3,14 @@ import { ConsumeMessage } from 'amqplib';
 import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { InventoryConsumer } from '@/modules/inventory/inventory.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { OrderStatus } from '@/entities/order/OrderStatus';
-import {
-  OrderCreatedEvent,
-  OrderRoutingKey,
-} from '@/modules/messaging/events/order-events';
+import { OrderCreatedEvent } from '@/modules/messaging/events/order-events';
 
 describe('InventoryConsumer', () => {
   const inboxMock = { runOnce: jest.fn() };
   const ordersMock = { transitionOrder: jest.fn() };
-  const publisherMock = { publish: jest.fn() };
 
   let consumer: InventoryConsumer;
 
@@ -34,12 +29,11 @@ describe('InventoryConsumer', () => {
     consumer = new InventoryConsumer(
       inboxMock as unknown as InboxService,
       ordersMock as unknown as OrdersService,
-      publisherMock as unknown as EventPublisher,
       fakeCls(),
     );
   });
 
-  it('reserves (transitions to RESERVED) and publishes InventoryReserved once', async () => {
+  it('reserves (transitions to RESERVED) and stops there — no auto-publish', async () => {
     const manager = {} as EntityManager;
     inboxMock.runOnce.mockImplementation(
       async (
@@ -59,18 +53,14 @@ describe('InventoryConsumer', () => {
       OrderStatus.RESERVED,
       manager,
     );
-    expect(publisherMock.publish).toHaveBeenCalledWith(
-      OrderRoutingKey.InventoryReserved,
-      expect.objectContaining({ orderId: 'order-1', userId: 'user-1' }),
-    );
   });
 
-  it('does not republish when the message was already processed', async () => {
+  it('does not transition twice when the message was already processed', async () => {
     inboxMock.runOnce.mockResolvedValue(false);
 
     await consumer.onOrderCreated(event, messageWith('msg-1'));
 
-    expect(publisherMock.publish).not.toHaveBeenCalled();
+    expect(ordersMock.transitionOrder).not.toHaveBeenCalled();
   });
 
   it('dead-letters a message with no messageId without processing it', async () => {

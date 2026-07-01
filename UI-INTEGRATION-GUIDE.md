@@ -10,12 +10,14 @@ A complete guide for building a UI that demonstrates the capabilities of this or
 2. [Authentication Flow](#authentication-flow)
 3. [API Integration Patterns](#api-integration-patterns)
 4. [Order Lifecycle & Polling](#order-lifecycle--polling)
-5. [Real-Time State Simulation](#real-time-state-simulation)
-6. [Error Handling & Recovery](#error-handling--recovery)
-7. [Admin Panel](#admin-panel)
-8. [Observability Integration](#observability-integration)
-9. [Example Implementation (React)](#example-implementation-react)
-10. [Demo Scenarios](#demo-scenarios)
+5. [Confirming Payment (the "Pay" button)](#confirming-payment-the-pay-button)
+6. [Real-Time State Simulation](#real-time-state-simulation)
+7. [Error Handling & Recovery](#error-handling--recovery)
+8. [Admin Panel](#admin-panel)
+9. [Observability Integration](#observability-integration)
+10. [Metrics History (Durable, Resolution-Bucketed)](#metrics-history-durable-resolution-bucketed)
+11. [Example Implementation (React)](#example-implementation-react)
+12. [Demo Scenarios](#demo-scenarios)
 
 ---
 
@@ -38,24 +40,30 @@ A complete guide for building a UI that demonstrates the capabilities of this or
     │  │ ├─ POST /auth/register    │ ├─ POST /orders            │  │
     │  │ ├─ POST /auth/login       │ ├─ GET  /orders            │  │
     │  │ ├─ POST /auth/refresh     │ ├─ GET  /orders/:id        │  │
-    │  │ ├─ GET  /auth/me          │ └─                          │  │
+    │  │ ├─ GET  /auth/me          │ └─ POST /orders/:id/pay    │  │
     │  │ └─                         │                            │  │
     │  │ Admin Endpoints            │ Observability             │  │
     │  │ ├─ GET  /admin/users      │ ├─ GET  /health           │  │
     │  │ ├─ PATCH /admin/users/:id │ ├─ GET  /metrics (Prom)   │  │
-    │  │ └─ /disable|enable        │ └─ Tracing (OTEL)         │  │
+    │  │ └─ /disable|enable        │ ├─ GET  /metrics/history  │  │
+    │  │                            │ └─ Tracing (OTEL)         │  │
     │  └─────────────────────────────────────────────────────────┘  │
     │                                                                 │
     │  ┌─────────────────────────────────────────────────────────┐  │
     │  │ Backing Services                                         │  │
-    │  │  ├─ PostgreSQL (Order, User, Auth, Payment records)    │  │
+    │  │  ├─ PostgreSQL (Order, User, Auth, Payment, Metric      │  │
+    │  │  │   history records)                                   │  │
     │  │  ├─ RabbitMQ (Event-driven async fulfilment)           │  │
     │  │  └─ Redis (Order status cache, read-through)           │  │
     │  └─────────────────────────────────────────────────────────┘  │
     │                                                                 │
     │  ┌─────────────────────────────────────────────────────────┐  │
     │  │ Async Event Chain (RabbitMQ consumers)                  │  │
-    │  │  order.created  ──▶ [inventory]  ──▶ inventory_reserved │  │
+    │  │  order.created ──▶ [inventory] ──▶ order RESERVED       │  │
+    │  │                                        │                 │  │
+    │  │                          ⏸  PAUSED — waits here for      │  │
+    │  │                          POST /orders/:id/pay (the UI's  │  │
+    │  │                          simulated "Pay" button)         │  │
     │  │                                        │                 │  │
     │  │                                        ▼                 │  │
     │  │                                    [payment]  ──▶ order_ │  │
@@ -73,11 +81,12 @@ A complete guide for building a UI that demonstrates the capabilities of this or
 
 **Key Design Decisions:**
 - **No WebSockets**: Status updates are polled (simpler, stateless backend)
-- **Event-Driven Backend**: Orders progress asynchronously through RabbitMQ
+- **Event-Driven Backend, with one manual gate**: Reservation happens automatically; the order then pauses in RESERVED until the caller calls `POST /orders/:id/pay` (the UI's simulated "Pay" button), which resumes the async chain
+- **Durable metric history**: `/metrics` (Prometheus) is in-memory and resets on restart; `/metrics/history` is backed by a Postgres table and survives restarts, pre-aggregated by resolution so responses stay small
 - **Httponly Cookies**: Refresh token is never exposed to JavaScript
 - **Access Token in Memory**: Limits XSS blast radius
 - **CORS & Cookies**: Supports both same-origin and cross-origin deployments
-- **Idempotency**: Payment authorization is idempotent per order (safe to retry)
+- **Idempotency**: Payment authorization is idempotent per order (safe to retry); the pay endpoint itself is idempotent too — a double-click can't double-charge
 
 ---
 
@@ -214,14 +223,29 @@ Response (error):
 
 ```
 Happy path:
-  PENDING ──[inventory reserve]──> RESERVED ──[payment auth]──> PAID ──[fulfil]──> COMPLETED
+  PENDING ──[inventory reserve, automatic]──> RESERVED
+                                                  │
+                                    ⏸  PAUSED — waits for the caller to
+                                    POST /orders/:id/pay (simulated "Pay")
+                                                  │
+                                                  ▼
+                                    ──[payment auth]──> PAID ──[fulfil]──> COMPLETED
 
 Failure paths:
   PENDING ──[inventory fails]──> FAILED
-  RESERVED ──[payment fails]──> FAILED
+  RESERVED ──[payment fails, only after /pay is called]──> FAILED
 
 Terminal states: COMPLETED, FAILED (no outgoing transitions)
 ```
+
+**RESERVED is now a real pause, not a transient state.** Inventory reservation
+still happens automatically and immediately after `POST /orders`. But nothing
+advances the order past RESERVED until the UI calls
+`POST /orders/{id}/pay` — an order can sit in RESERVED indefinitely with no
+background process touching it. This is what makes the "Pay" button
+meaningful: it's the one thing that unblocks payment authorization and
+fulfilment, not just a UI affordance layered on top of an already-automatic
+flow.
 
 ### 2. Creating an Order
 
@@ -239,34 +263,41 @@ Response (immediate):
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "userId": "...",
     "status": "PENDING",
+    "paymentInitiatedAt": null,
     "createdAt": "2026-07-01T14:30:00.000Z",
     "updatedAt": "2026-07-01T14:30:00.000Z"
   }
 
-Returns immediately — fulfilment runs async in the background.
+Returns immediately — inventory reservation runs async in the background and
+lands the order in RESERVED within a second or two. Nothing further happens
+until the caller confirms payment (see the next section).
 ```
 
 ### 3. Polling for Status
 
 ```
-After POST /orders, poll GET /orders/:id in a loop until terminal state:
+After POST /orders, poll GET /orders/:id in a loop until the order reaches
+RESERVED (then wait for the "Pay" click), or a terminal state:
 
-while (!isTerminal(order.status)) {
+while (!isTerminal(order.status) && order.status !== 'RESERVED') {
   await sleep(1000);  // Poll every ~1 second for a few seconds
   order = await fetch(`GET /orders/${orderId}`, { headers: { Authorization: ... }});
 }
+// order.status is now RESERVED (show the "Pay" button) or FAILED.
 
 Terminal states: COMPLETED, FAILED
 
 Timeline (typical):
-  t+0s:   POST /orders       -> { status: "PENDING" }
-  t+1s:   GET /orders/:id    -> { status: "RESERVED" }     (inventory done)
-  t+2s:   GET /orders/:id    -> { status: "PAID" }         (payment done)
-  t+3s:   GET /orders/:id    -> { status: "COMPLETED" }    (fulfillment done)
+  t+0s:   POST /orders            -> { status: "PENDING" }
+  t+1s:   GET /orders/:id         -> { status: "RESERVED" }   (inventory done — polling stops here, UI shows "Pay")
+  ...     (order waits indefinitely until the user clicks "Pay")
+  t+Ns:   POST /orders/:id/pay    -> { status: "RESERVED", paymentInitiatedAt: "..." }  (resumes fulfilment; poll again)
+  t+N+1s: GET /orders/:id         -> { status: "PAID" }        (payment done)
+  t+N+2s: GET /orders/:id         -> { status: "COMPLETED" }   (fulfillment done)
 
 Variations:
   - Inventory fails:    PENDING -> FAILED (at t+1s)
-  - Payment fails:      RESERVED -> FAILED (at t+2s)
+  - Payment fails:      RESERVED -> FAILED (only after /pay is called)
   - Cache hit:          Status may not advance on every poll (order is still in queue)
   - Server load:        May take longer (RabbitMQ backoff, retries)
 ```
@@ -276,6 +307,11 @@ Variations:
 ```typescript
 const [order, setOrder] = useState<Order | null>(null);
 const [isPolling, setIsPolling] = useState(false);
+
+// Stop polling once the order needs a human action (RESERVED, awaiting the
+// "Pay" click) or has reached a terminal state.
+const isAwaitingAction = (status) =>
+  status === 'RESERVED' || isTerminal(status);
 
 const createAndPollOrder = async () => {
   // Create
@@ -288,9 +324,9 @@ const createAndPollOrder = async () => {
   setOrder(order);
   setIsPolling(true);
 
-  // Poll
+  // Poll until RESERVED (show "Pay") or a terminal state.
   let current = order;
-  while (!isTerminal(current.status)) {
+  while (!isAwaitingAction(current.status)) {
     await sleep(1000);
     const resp = await fetch(`/orders/${order.id}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -340,6 +376,67 @@ Returns the caller's own orders, newest first.
 
 ---
 
+## Confirming Payment (the "Pay" button)
+
+An order sitting in RESERVED goes nowhere until the caller confirms payment.
+This is the hook for a "Pay $X" button in the UI — a real payment provider
+never runs (see [Demo Scenarios](#demo-scenarios)), but the *gate* is real:
+nothing charges, authorizes, or completes the order until this endpoint is
+called.
+
+```
+POST /orders/:id/pay
+
+Request:
+  Headers:
+    Authorization: Bearer <accessToken>
+  Body: (empty)
+
+Response (immediate):
+  200
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "userId": "...",
+    "status": "RESERVED",
+    "paymentInitiatedAt": "2026-07-01T14:30:05.000Z",
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+
+Returns immediately with the order still RESERVED — payment authorization
+(the same simulated gateway as before) now runs asynchronously. Resume
+polling GET /orders/{id} to watch it advance to PAID → COMPLETED, or FAILED
+on a simulated decline.
+
+Errors:
+  404  Order doesn't exist or isn't the caller's.
+  409  Order isn't RESERVED (e.g. still PENDING, or PAID/COMPLETED/FAILED
+       already), OR payment was already initiated for it. Safe to treat as
+       "nothing to do" — disable the Pay button and keep polling.
+```
+
+**Idempotency / double-click safety**: the server claims the order with an
+atomic `UPDATE ... WHERE status = 'RESERVED' AND paymentInitiatedAt IS NULL`.
+Two concurrent `POST /pay` calls (e.g. a double-click before the button
+disables) can only ever have one succeed — the other gets a 409, not a
+duplicate charge. The UI doesn't need its own debounce logic to be correct,
+though disabling the button on click is still good UX.
+
+```typescript
+const payForOrder = async (orderId: string) => {
+  const resp = await fetchWithAuth(`/orders/${orderId}/pay`, { method: 'POST' });
+  if (resp.status === 409) {
+    // Already paid / not reserved anymore — just resume polling, don't show an error.
+    return;
+  }
+  if (!resp.ok) throw new Error('Failed to confirm payment');
+  const order = await resp.json();
+  setOrder(order); // still RESERVED — resume the polling loop from here
+};
+```
+
+---
+
 ## Real-Time State Simulation
 
 Since there are no WebSockets, the UI can simulate "real-time" updates for a smoother UX:
@@ -352,14 +449,17 @@ Since there are no WebSockets, the UI can simulate "real-time" updates for a smo
 
 const assumedProgression = {
   'PENDING':    { assumeNext: 'RESERVED', delayMs: 1000 },
-  'RESERVED':   { assumeNext: 'PAID',     delayMs: 1000 },
+  // RESERVED no longer auto-advances — it's a real pause waiting on
+  // POST /orders/:id/pay, so there's nothing to optimistically assume here.
+  'RESERVED':   { assumeNext: null },
   'PAID':       { assumeNext: 'COMPLETED', delayMs: 1000 },
   'COMPLETED': { assumeNext: null },
   'FAILED':     { assumeNext: null },
 };
 
 // UI shows the assumed status immediately, but validates with the server
-// via polling. If the server disagrees, revert to actual state.
+// via polling. If the server disagrees, revert to actual state. Once RESERVED
+// is reached, stop assuming and show the "Pay" button instead.
 ```
 
 ### Server Validation with Backoff
@@ -392,22 +492,43 @@ while (!isTerminal(current.status)) {
 ```
 While polling for order status:
 
+While reserving (PENDING → RESERVED):
 ┌─────────────────────────────────┐
 │ Order: #550e8400-e29b-...       │
 │                                 │
 │ Status: PENDING                 │
 │ ┌─────────────────────────────┐ │
-│ │ ⏳ Processing your order... │ │
-│ │ • Checking inventory        │ │
-│ │ • Processing payment        │ │
-│ │ • Finalizing order          │ │
+│ │ ⏳ Checking inventory...     │ │
 │ └─────────────────────────────┘ │
 │ [Cancel] [Refresh]              │
 └─────────────────────────────────┘
 
+Once RESERVED — waiting for the user, not the server:
+┌─────────────────────────────────┐
+│ Order: #550e8400-e29b-...       │
+│                                 │
+│ Status: RESERVED                │
+│ ┌─────────────────────────────┐ │
+│ │ ✓ Inventory reserved         │ │
+│ │ Ready to pay — $42.00        │ │
+│ └─────────────────────────────┘ │
+│           [ Pay ]                │
+└─────────────────────────────────┘
+
+After clicking Pay (PAID → COMPLETED, async again):
+┌─────────────────────────────────┐
+│ Status: RESERVED (paying...)    │
+│ ┌─────────────────────────────┐ │
+│ │ ✓ Inventory reserved         │ │
+│ │ ⏳ Processing payment...     │ │
+│ │ • Finalizing order           │ │
+│ └─────────────────────────────┘ │
+└─────────────────────────────────┘
+
 Progress indicators:
-  ✓ = COMPLETED/PAID
+  ✓ = COMPLETED/PAID/RESERVED (done)
   ○ = PENDING (next steps)
+  ⏸ = RESERVED, awaiting the Pay click
   ✗ = FAILED
 ```
 
@@ -627,6 +748,11 @@ Use this to:
 - Build Grafana dashboards
 - Monitor request latency, error rates, order throughput
 - Spot performance issues
+
+Note: this is the in-memory Prometheus registry — a restart zeroes it, and
+it's shaped for a scraper, not a UI chart. For a JSON, durable, chartable
+history (what a UI dashboard actually wants), use `GET /metrics/history`
+instead — see the next section.
 ```
 
 ### OpenTelemetry Tracing (Optional)
@@ -658,6 +784,111 @@ Example Jaeger query:
        └─ OrdersService.updateStatus (RESERVED → PAID)
     └─ CompletionConsumer.handlePaymentProcessed
        └─ OrdersService.updateStatus (PAID → COMPLETED)
+```
+
+---
+
+## Metrics History (Durable, Resolution-Bucketed)
+
+Every Prometheus collector in the app (`consumer_messages`,
+`consumer_processing_duration_ms`, `orders_terminal`, `db_query_duration_ms`,
+`http_request_duration_ms`) is mirrored into a Postgres table (`metric_events`)
+as it's recorded. `GET /metrics/history` reads that table — so unlike
+`/metrics`, it survives a restart, and a UI dashboard doesn't have to scrape
+and store history itself.
+
+### Fetching History
+
+```
+GET /metrics/history?metric=<name>&resolution=<res>&from=<iso>&to=<iso>
+
+Request:
+  Headers:
+    Authorization: Bearer <accessToken>   (any authenticated user)
+
+Query params:
+  metric      required. One of:
+                consumer_messages
+                consumer_processing_duration_ms
+                orders_terminal
+                db_query_duration_ms
+                http_request_duration_ms
+  resolution  optional, default "raw". One of:
+                raw | 1h | 6h | 12h | 1d | 1w | 1mo
+  from        optional. ISO-8601 start of the window (inclusive).
+  to          optional. ISO-8601 end of the window (inclusive), default now.
+
+Response:
+  200
+  {
+    "metric": "orders_terminal",
+    "resolution": "1h",
+    "points": [
+      { "bucketStart": "2026-07-01T12:00:00.000Z", "count": 8, "sum": 8, "avg": 1, "min": 1, "max": 1 },
+      { "bucketStart": "2026-07-01T13:00:00.000Z", "count": 3, "sum": 3, "avg": 1, "min": 1, "max": 1 },
+      ...
+    ]
+  }
+```
+
+### Reading a point: counters vs. durations
+
+Each point aggregates every sample that fell in its bucket. Which field to
+chart depends on the metric:
+
+| Metric | What it means | Chart with |
+|---|---|---|
+| `orders_terminal` | Orders reaching COMPLETED/FAILED | `sum` (or `count` — identical, each sample is 1) |
+| `consumer_messages` | Messages a consumer processed/skipped/retried/failed | `sum` |
+| `db_query_duration_ms` | DB operation latency | `avg` (or `max` for a worst-case line) |
+| `consumer_processing_duration_ms` | Time a consumer spent per message | `avg` |
+| `http_request_duration_ms` | HTTP request latency | `avg` |
+
+### Resolutions — why the response stays small
+
+| Resolution | Bucket width | Default window (if `from` omitted) | Typical point count |
+|---|---|---|---|
+| `raw` | none (individual samples) | last 1 hour | ≤ 500 (capped, most recent) |
+| `1h` | 1 hour | last 24 hours | ≤ 24 |
+| `6h` | 6 hours | last 7 days | ≤ 28 |
+| `12h` | 12 hours | last 14 days | ≤ 28 |
+| `1d` | 1 day | last 30 days | ≤ 30 |
+| `1w` | 1 week | last 90 days | ≤ 13 |
+| `1mo` | 30 days (fixed-width, not a calendar month) | last 365 days | ≤ 12 |
+
+Every resolution is additionally hard-capped at 500 points server-side
+(bucketing happens in SQL, not client-side), so the response size never grows
+with how much history has accumulated — a chart backed by a year of data
+looks the same size on the wire as one backed by a day.
+
+### Example: a small dashboard chart
+
+```typescript
+const useMetricHistory = (metric: string, resolution: string) => {
+  const [points, setPoints] = useState([]);
+  const fetchWithAuth = useFetchWithAuth();
+
+  useEffect(() => {
+    const load = async () => {
+      const resp = await fetchWithAuth(
+        `/metrics/history?metric=${metric}&resolution=${resolution}`,
+      );
+      if (resp.ok) {
+        const body = await resp.json();
+        setPoints(body.points);
+      }
+    };
+    load();
+    const interval = setInterval(load, 30000); // refresh every 30s
+    return () => clearInterval(interval);
+  }, [metric, resolution]);
+
+  return points;
+};
+
+// Usage: chart order throughput over the last day, hourly buckets
+const points = useMetricHistory('orders_terminal', '1d');
+// points[i] = { bucketStart, count, sum, avg, min, max }
 ```
 
 ---
@@ -841,11 +1072,14 @@ interface Order {
   id: string;
   userId: string;
   status: 'PENDING' | 'RESERVED' | 'PAID' | 'COMPLETED' | 'FAILED';
+  paymentInitiatedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 const isTerminal = (status: string) => ['COMPLETED', 'FAILED'].includes(status);
+// Polling stops here too — RESERVED means "waiting for the user", not the server.
+const isAwaitingAction = (status: string) => status === 'RESERVED' || isTerminal(status);
 
 export const useOrderCreation = () => {
   const [order, setOrder] = useState<Order | null>(null);
@@ -853,22 +1087,14 @@ export const useOrderCreation = () => {
   const [error, setError] = useState<string | null>(null);
   const fetchWithAuth = useFetchWithAuth();
 
-  const createAndPollOrder = useCallback(async () => {
-    setError(null);
-    try {
-      // 1. Create order
-      const createResp = await fetchWithAuth('/orders', { method: 'POST' });
-      if (!createResp.ok) throw new Error('Failed to create order');
-
-      let current = (await createResp.json()) as Order;
-      setOrder(current);
-      setIsPolling(true);
-
-      // 2. Poll for status
+  /** Polls GET /orders/:id with backoff until `stopWhen(status)` is true. */
+  const pollUntil = useCallback(
+    async (start: Order, stopWhen: (status: string) => boolean) => {
+      let current = start;
       let backoffMs = 1000;
       const maxBackoff = 16000;
 
-      while (!isTerminal(current.status)) {
+      while (!stopWhen(current.status)) {
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
 
         const pollResp = await fetchWithAuth(`/orders/${current.id}`);
@@ -888,15 +1114,56 @@ export const useOrderCreation = () => {
 
         setOrder(current);
       }
+    },
+    [fetchWithAuth],
+  );
 
+  const createAndPollOrder = useCallback(async () => {
+    setError(null);
+    try {
+      // 1. Create order
+      const createResp = await fetchWithAuth('/orders', { method: 'POST' });
+      if (!createResp.ok) throw new Error('Failed to create order');
+
+      const created = (await createResp.json()) as Order;
+      setOrder(created);
+      setIsPolling(true);
+
+      // 2. Poll until RESERVED (show "Pay") or a terminal state.
+      await pollUntil(created, isAwaitingAction);
       setIsPolling(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
       setIsPolling(false);
     }
-  }, [fetchWithAuth]);
+  }, [fetchWithAuth, pollUntil]);
 
-  return { order, isPolling, error, createAndPollOrder };
+  // 3. Confirm payment (the "Pay" button), then resume polling to the terminal state.
+  const payForOrder = useCallback(async () => {
+    if (!order) return;
+    setError(null);
+    try {
+      const payResp = await fetchWithAuth(`/orders/${order.id}/pay`, {
+        method: 'POST',
+      });
+      if (payResp.status === 409) {
+        // Already paid / no longer RESERVED — just resume polling.
+      } else if (!payResp.ok) {
+        throw new Error('Failed to confirm payment');
+      } else {
+        setOrder((await payResp.json()) as Order);
+      }
+
+      setIsPolling(true);
+      await pollUntil(order, isTerminal);
+      setIsPolling(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setIsPolling(false);
+    }
+  }, [order, fetchWithAuth, pollUntil]);
+
+  return { order, isPolling, error, createAndPollOrder, payForOrder };
 };
 ```
 
@@ -907,7 +1174,7 @@ export const useOrderCreation = () => {
 import { useOrderCreation } from './useOrderCreation';
 
 export const OrderPage = () => {
-  const { order, isPolling, error, createAndPollOrder } = useOrderCreation();
+  const { order, isPolling, error, createAndPollOrder, payForOrder } = useOrderCreation();
 
   return (
     <div className="order-page">
@@ -939,6 +1206,14 @@ export const OrderPage = () => {
                   Complete order
                 </li>
               </ul>
+            </div>
+          )}
+
+          {/* RESERVED + not polling = waiting on the user, not the server. */}
+          {!isPolling && order.status === 'RESERVED' && !order.paymentInitiatedAt && (
+            <div className="ready-to-pay">
+              <p>✓ Inventory reserved — ready to pay.</p>
+              <button onClick={payForOrder}>Pay</button>
             </div>
           )}
 
@@ -1057,20 +1332,26 @@ export const AdminUsersPanel = () => {
 **What to show:**
 1. User registers and logs in
 2. Creates an order (shows PENDING immediately)
-3. Polling animation: "Processing..." with checkmarks advancing
-4. Order progresses: PENDING → RESERVED → PAID → COMPLETED (takes ~3 seconds)
-5. Success screen with order ID
+3. Polling animation: "Checking inventory..." for ~1 second
+4. Order reaches RESERVED — polling stops, a "Pay" button appears
+5. User clicks "Pay" → `POST /orders/{id}/pay`, polling resumes
+6. Order progresses: RESERVED → PAID → COMPLETED (takes ~2 seconds)
+7. Success screen with order ID
 
 **Backend timeline:**
 ```
-t+0s:   POST /orders      → status=PENDING
-t+~1s:  Inventory reserve → status=RESERVED
-t+~2s:  Payment auth      → status=PAID
-t+~3s:  Fulfillment      → status=COMPLETED
+t+0s:    POST /orders          → status=PENDING
+t+~1s:   Inventory reserve     → status=RESERVED   (⏸ pauses here — no background process advances it)
+...      (waits indefinitely for the user)
+t+Ns:    POST /orders/:id/pay  → status=RESERVED, paymentInitiatedAt set (resumes fulfilment)
+t+N+~1s: Payment auth          → status=PAID
+t+N+~2s: Fulfillment           → status=COMPLETED
 ```
 
 **UI talking points:**
-- "Async fulfilment: the order progresses through states in the background"
+- "Async fulfilment, with one deliberate manual gate: the order reserves automatically, but nothing charges until the user clicks Pay"
+- "The pause is real, not simulated in the UI — the backend genuinely does nothing to a RESERVED order until /pay is called"
+- "The pay endpoint is idempotent — a double-click can't double-charge (atomic claim in Postgres)"
 - "Polling pattern keeps the UI responsive without WebSockets"
 - "Correlation IDs (if shown) link this request through logs and traces"
 
@@ -1080,10 +1361,11 @@ t+~3s:  Fulfillment      → status=COMPLETED
 
 **What to show:**
 1. User creates an order
-2. Order reaches RESERVED state (inventory succeeds)
-3. At PAID stage, payment is declined
-4. Order transitions to FAILED state
-5. UI shows error screen, user can retry
+2. Order reaches RESERVED state (inventory succeeds) — "Pay" button appears
+3. User clicks "Pay"
+4. Payment is declined during the async authorization that follows
+5. Order transitions to FAILED state
+6. UI shows error screen, user can retry with a new order
 
 **Triggered by:**
 Override the `PaymentGateway.charge()` method in the test to return `{ authorized: false, declineReason: 'insufficient_funds' }`. Or patch a running instance via the test suite.
@@ -1091,6 +1373,7 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
 **UI talking points:**
 - "Idempotency ensures safe retries—the same order ID won't charge twice"
 - "Partial failure is handled gracefully—inventory is reserved but the order can be retried"
+- "Even after a decline, `paymentInitiatedAt` stays set — the order can't be paid again, only recreated"
 
 ---
 
@@ -1232,7 +1515,18 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
      -H "Authorization: Bearer <token>" \
      -b cookies.txt
 
-   # Poll for status (in a loop)
+   # Poll for status (in a loop) — stops advancing once RESERVED
+   curl http://localhost:3000/orders/<id> \
+     -H "Authorization: Bearer <token>" \
+     -b cookies.txt
+
+   # Confirm payment once RESERVED (the simulated "Pay" click) — required to
+   # progress any further; nothing does this automatically
+   curl -X POST http://localhost:3000/orders/<id>/pay \
+     -H "Authorization: Bearer <token>" \
+     -b cookies.txt
+
+   # Poll again to watch RESERVED -> PAID -> COMPLETED
    curl http://localhost:3000/orders/<id> \
      -H "Authorization: Bearer <token>" \
      -b cookies.txt
@@ -1256,7 +1550,10 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
 |-------|-------|----------|
 | CORS errors on cross-origin requests | CORS_ORIGIN not set | Set `CORS_ORIGIN=https://your-ui-domain.com` in backend env |
 | Refresh cookie not sent on subsequent requests | `credentials: 'include'` missing | Add `credentials: 'include'` to all fetch calls |
-| Order status never advances | RabbitMQ connection issue | Check `RABBITMQ_URL` env var; ensure CloudAMQP/RabbitMQ is running |
+| Order status never advances past PENDING | RabbitMQ connection issue | Check `RABBITMQ_URL` env var; ensure CloudAMQP/RabbitMQ is running |
+| Order stuck in RESERVED forever | This is expected — RESERVED no longer auto-advances. Call `POST /orders/:id/pay` | Not a bug; wire up the "Pay" button (see [Confirming Payment](#confirming-payment-the-pay-button)) |
+| `POST /orders/:id/pay` returns 409 | Order isn't RESERVED, or payment was already initiated for it | Treat as a no-op: disable the button and resume polling — it's not an error to surface to the user |
+| `/metrics/history` returns an empty `points` array | No samples recorded yet in the requested window, or that metric hasn't fired | Trigger the relevant activity (e.g. create+pay an order for `orders_terminal`) and retry; widen `from`/`to` |
 | Token refresh fails even though token expired | Refresh cookie is missing or httpOnly misconfiguration | Check browser DevTools Cookies; ensure the cookie was set with `HttpOnly` flag |
 | Admin endpoints return 403 even with admin user | Role not propagated in JWT | Check `auth.service.ts` that `role` is included in the JWT payload |
 | Observability traces are missing | OTEL not configured | Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable tracing; unset disables tracing |
@@ -1266,7 +1563,7 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
 ## Next Steps
 
 1. **Build the UI**: Use the React hooks and patterns above to create a full-featured dashboard.
-2. **Add Charts**: Use Recharts or Chart.js to visualize order metrics (throughput, status distribution, latency).
+2. **Add Charts**: Use Recharts or Chart.js to visualize `GET /metrics/history` (throughput, status distribution, latency) — it's already resolution-bucketed and durable, so no client-side aggregation is needed.
 3. **Integrate Observability**: Link correlation IDs from the UI to Jaeger traces and Prometheus dashboards.
 4. **Deploy**: Push to Render/Vercel and set up cross-origin CORS.
 5. **Load Testing**: Use k6 or Artillery to simulate 100+ concurrent orders and measure throughput; tune RabbitMQ consumer counts.

@@ -5,6 +5,8 @@ import {
   ordersTerminalTotal,
   recordConsumerOutcome,
   recordTerminalState,
+  setMetricsSink,
+  startConsumerTimer,
   timeDb,
 } from '@/modules/metrics/metrics.collectors';
 
@@ -75,5 +77,49 @@ describe('metrics.collectors', () => {
       operation: 'unit.op',
     });
     expect(after - before).toBe(1);
+  });
+
+  describe('setMetricsSink', () => {
+    afterEach(() => setMetricsSink(undefined));
+
+    it('forwards recordConsumerOutcome, recordTerminalState and timeDb to the sink', async () => {
+      const record = jest.fn();
+      setMetricsSink({ record });
+
+      recordConsumerOutcome('unit', 'processed');
+      recordTerminalState('failed');
+      await timeDb('unit.op', () => Promise.resolve('ok'));
+
+      expect(record).toHaveBeenCalledWith('consumer_messages', 1, {
+        consumer: 'unit',
+        outcome: 'processed',
+      });
+      expect(record).toHaveBeenCalledWith('orders_terminal', 1, {
+        state: 'failed',
+      });
+      expect(record).toHaveBeenCalledWith(
+        'db_query_duration_ms',
+        expect.any(Number),
+        { operation: 'unit.op' },
+      );
+    });
+
+    it('forwards startConsumerTimer duration once the returned stop fn runs', () => {
+      const record = jest.fn();
+      setMetricsSink({ record });
+
+      const stop = startConsumerTimer('unit');
+      stop();
+
+      expect(record).toHaveBeenCalledWith(
+        'consumer_processing_duration_ms',
+        expect.any(Number),
+        { consumer: 'unit' },
+      );
+    });
+
+    it('never throws when no sink is set', () => {
+      expect(() => recordConsumerOutcome('unit', 'processed')).not.toThrow();
+    });
   });
 });

@@ -4,7 +4,6 @@ import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
@@ -14,15 +13,20 @@ import {
   ORDER_EXCHANGE,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
-import type {
-  InventoryReservedEvent,
-  OrderCreatedEvent,
-} from '@/modules/messaging/events/order-events';
+import type { OrderCreatedEvent } from '@/modules/messaging/events/order-events';
 
 /** Inbox consumer key — scopes idempotency records to this consumer. */
 const CONSUMER = 'inventory';
 
-/** Reserves inventory in response to OrderCreated and advances the order. */
+/**
+ * Reserves inventory in response to OrderCreated and advances the order to
+ * RESERVED. Deliberately does **not** publish onward from there — the order
+ * pauses in RESERVED until the caller confirms payment via
+ * `POST /orders/{id}/pay` (OrdersService.initiatePayment), which publishes
+ * the event PaymentConsumer listens for. This turns "reserved" into a real
+ * gate the UI's simulated "Pay" button controls, instead of the whole chain
+ * firing automatically.
+ */
 @Injectable()
 export class InventoryConsumer {
   private readonly logger = new Logger(InventoryConsumer.name);
@@ -30,7 +34,6 @@ export class InventoryConsumer {
   constructor(
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
-    private readonly publisher: EventPublisher,
     private readonly cls: ClsService,
   ) {}
 
@@ -45,8 +48,8 @@ export class InventoryConsumer {
     event: OrderCreatedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {
-    // Continue the publisher's correlation id for this whole handler so its logs
-    // and the InventoryReserved it emits stay on the same trace.
+    // Continue the publisher's correlation id for this whole handler so its
+    // logs stay on the same trace as the request that created the order.
     return runWithCorrelationId(this.cls, amqpMsg, () =>
       this.reserve(event, amqpMsg),
     );
@@ -58,6 +61,8 @@ export class InventoryConsumer {
   ): Promise<Nack | void> {
     // Reserve inventory (simulated) and advance the order to RESERVED exactly
     // once: the transition and the inbox record commit in one transaction.
+    // No event is published from here — see the class doc: the order now
+    // waits for the caller to confirm payment.
     const outcome = await processEventOnce(
       amqpMsg,
       CONSUMER,
@@ -74,19 +79,8 @@ export class InventoryConsumer {
     if (outcome instanceof Nack) return outcome;
     if (outcome === 'skipped') return;
 
-    const reserved: InventoryReservedEvent = {
-      orderId: event.orderId,
-      userId: event.userId,
-      occurredAt: new Date().toISOString(),
-    };
-    try {
-      await this.publisher.publish(OrderRoutingKey.InventoryReserved, reserved);
-      this.logger.log(`Reserved inventory for order ${event.orderId}`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish InventoryReserved for order ${event.orderId}`,
-        error as Error,
-      );
-    }
+    this.logger.log(
+      `Reserved inventory for order ${event.orderId}; awaiting payment confirmation`,
+    );
   }
 }
