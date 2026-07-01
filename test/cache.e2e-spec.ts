@@ -173,11 +173,11 @@ describe('Order caching (e2e)', () => {
         `${warmAvg.toFixed(2)}ms; order hit rate ${(after.hitRate * 100).toFixed(0)}%`,
     );
 
-    // Each cold read counted a miss; each warm read counted a hit.
+    // Each cold read counted a miss; each warm read counted a hit. The
+    // cold-vs-warm latency is logged above as evidence but not asserted —
+    // wall-clock comparisons are environment-dependent and flake under load.
     expect(after.hits - before.hits).toBe(samples);
     expect(after.misses - before.misses).toBe(samples);
-    // Warm reads (Redis only) are faster than cold reads (Redis + Postgres).
-    expect(warmAvg).toBeLessThan(coldAvg);
   });
 
   it('an order update is observably followed by a cache miss', async () => {

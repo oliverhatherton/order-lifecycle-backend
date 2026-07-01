@@ -64,10 +64,17 @@ export interface StartTestAppOptions {
  * (cookie-parser + the global ValidationPipe). Shared by every e2e suite so the
  * bootstrap lives in one place.
  */
+// Containers get a generous startup window: with the whole e2e suite running
+// serially, many containers are spun up/down on one Docker host, and the
+// default 10s port-bind wait flakes under that load.
+const CONTAINER_STARTUP_TIMEOUT_MS = 120_000;
+
 export async function startTestApp(
   options: StartTestAppOptions,
 ): Promise<TestApp> {
-  const container = await new PostgreSqlContainer('postgres:16').start();
+  const container = await new PostgreSqlContainer('postgres:16')
+    .withStartupTimeout(CONTAINER_STARTUP_TIMEOUT_MS)
+    .start();
 
   // redisConfig is always loaded so the global CacheModule's DI resolves; the
   // client is either a real container (redis: true) or an in-memory fake.
@@ -76,7 +83,9 @@ export async function startTestApp(
 
   let rabbitContainer: StartedRabbitMQContainer | undefined;
   if (options.rabbitmq) {
-    rabbitContainer = await new RabbitMQContainer('rabbitmq:4').start();
+    rabbitContainer = await new RabbitMQContainer('rabbitmq:4')
+      .withStartupTimeout(CONTAINER_STARTUP_TIMEOUT_MS)
+      .start();
     // rabbitmqConfig reads this at factory time.
     process.env.RABBITMQ_URL = rabbitContainer.getAmqpUrl();
     load.push(rabbitmqConfig);
@@ -84,7 +93,9 @@ export async function startTestApp(
 
   let redisContainer: StartedRedisContainer | undefined;
   if (options.redis) {
-    redisContainer = await new RedisContainer('redis:7').start();
+    redisContainer = await new RedisContainer('redis:7')
+      .withStartupTimeout(CONTAINER_STARTUP_TIMEOUT_MS)
+      .start();
     // redisConfig reads this at factory time.
     process.env.REDIS_URL = redisContainer.getConnectionUrl();
   } else {
