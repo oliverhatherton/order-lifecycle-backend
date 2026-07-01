@@ -12,6 +12,7 @@ export const PERSISTED_METRICS = [
   'orders_terminal',
   'db_query_duration_ms',
   'http_request_duration_ms',
+  'stock_replenished',
 ] as const;
 
 export type PersistedMetricName = (typeof PERSISTED_METRICS)[number];

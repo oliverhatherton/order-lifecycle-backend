@@ -3,17 +3,27 @@ import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { OrdersService } from '@/modules/orders/services/orders.service';
+import { ProductsModule } from '@/modules/products/products.module';
+import { CartModule } from '@/modules/cart/cart.module';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
+import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
+import { ProductEntity } from '@/entities/product/ProductEntity';
+import { CartEntity } from '@/entities/cart/CartEntity';
+import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
-import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   ORDER_EXCHANGE,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
-import { registerAndLogin, setupE2eTest, waitFor } from '@test/support/e2e';
+import {
+  createProduct,
+  registerAndLogin,
+  setupE2eTest,
+  waitFor,
+} from '@test/support/e2e';
 
 const CORRELATION_HEADER = 'x-correlation-id';
 
@@ -29,10 +39,23 @@ describe('Correlation IDs (e2e)', () => {
       UserEntity,
       RefreshTokenEntity,
       OrderEntity,
+      OrderItemEntity,
+      ProductEntity,
+      CartEntity,
+      CartItemEntity,
       ProcessedMessageEntity,
     ],
-    imports: [AuthModule, OrdersModule],
-    truncate: ['processed_messages', 'orders', 'refresh_tokens', 'users'],
+    imports: [AuthModule, OrdersModule, ProductsModule, CartModule],
+    truncate: [
+      'processed_messages',
+      'order_items',
+      'orders',
+      'cart_items',
+      'carts',
+      'products',
+      'refresh_tokens',
+      'users',
+    ],
     rabbitmq: true,
   });
 
@@ -68,11 +91,11 @@ describe('Correlation IDs (e2e)', () => {
 
   it('echoes a supplied correlation id and propagates it across the broker', async () => {
     const token = await registerAndLogin(ctx.app);
-    const created = await request(ctx.app.getHttpServer())
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .expect(201);
-    const { id } = created.body as OrderResponseDTO;
+    const user = await ctx.dataSource
+      .getRepository(UserEntity)
+      .findOneByOrFail({ email: 'test@example.com' });
+    const order = await ctx.app.get(OrdersService).createOrder(user.id, []);
+    const { id } = order;
     await ctx.app.get(OrdersService).transitionOrder(id, OrderStatus.RESERVED);
 
     const queue = await bindReservedQueue();
@@ -93,9 +116,15 @@ describe('Correlation IDs (e2e)', () => {
     const token = await registerAndLogin(ctx.app, {
       email: 'nocid@example.com',
     });
+    const productId = await createProduct(ctx.dataSource);
+    await request(ctx.app.getHttpServer())
+      .post('/cart/items')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ productId, quantity: 1 })
+      .expect(200);
 
     const response = await request(ctx.app.getHttpServer())
-      .post('/orders')
+      .post('/cart/checkout')
       .set('Authorization', `Bearer ${token}`)
       .expect(201);
 

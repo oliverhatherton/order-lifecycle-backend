@@ -4,24 +4,37 @@ import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
+import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
+  InsufficientStockError,
+  ProductsService,
+} from '@/modules/products/products.service';
+import {
   ORDER_DLX,
   ORDER_EXCHANGE,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
-import type { OrderCreatedEvent } from '@/modules/messaging/events/order-events';
+import type {
+  OrderCreatedEvent,
+  OrderFailedEvent,
+} from '@/modules/messaging/events/order-events';
 
 /** Inbox consumer key — scopes idempotency records to this consumer. */
 const CONSUMER = 'inventory';
 
 /**
- * Reserves inventory in response to OrderCreated and advances the order to
- * RESERVED. Deliberately does **not** publish onward from there — the order
- * pauses in RESERVED until the caller confirms payment via
+ * Reserves real stock in response to OrderCreated: atomically decrements
+ * each line item's product (ProductsService.reserveStock) and advances the
+ * order to RESERVED. If any line is short, the order goes to FAILED instead
+ * (reason `insufficient_stock`) and any stock already decremented for this
+ * order is put back — see ProductsService.reserveStock for how.
+ *
+ * On success, deliberately does **not** publish onward from RESERVED — the
+ * order pauses there until the caller confirms payment via
  * `POST /orders/{id}/pay` (OrdersService.initiatePayment), which publishes
  * the event PaymentConsumer listens for. This turns "reserved" into a real
  * gate the UI's simulated "Pay" button controls, instead of the whole chain
@@ -34,6 +47,8 @@ export class InventoryConsumer {
   constructor(
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
+    private readonly products: ProductsService,
+    private readonly publisher: EventPublisher,
     private readonly cls: ClsService,
   ) {}
 
@@ -59,28 +74,70 @@ export class InventoryConsumer {
     event: OrderCreatedEvent,
     amqpMsg: ConsumeMessage,
   ): Promise<Nack | void> {
-    // Reserve inventory (simulated) and advance the order to RESERVED exactly
-    // once: the transition and the inbox record commit in one transaction.
-    // No event is published from here — see the class doc: the order now
-    // waits for the caller to confirm payment.
+    let shortProductId: string | undefined;
+
+    // Reserve stock and advance the order exactly once: everything commits
+    // (or the whole message is retried) in one transaction with the inbox
+    // record. An insufficient-stock failure is handled *inside* this
+    // callback — the FAILED transition still needs to commit — rather than
+    // by letting the transaction fail outright.
     const outcome = await processEventOnce(
       amqpMsg,
       CONSUMER,
       this.inbox,
       this.logger,
       async (manager) => {
-        await this.orders.transitionOrder(
-          event.orderId,
-          OrderStatus.RESERVED,
-          manager,
-        );
+        try {
+          await this.products.reserveStock(event.items, manager);
+          await this.orders.transitionOrder(
+            event.orderId,
+            OrderStatus.RESERVED,
+            manager,
+          );
+        } catch (error) {
+          if (!(error instanceof InsufficientStockError)) throw error;
+          shortProductId = error.productId;
+          await this.orders.transitionOrder(
+            event.orderId,
+            OrderStatus.FAILED,
+            manager,
+          );
+        }
       },
     );
     if (outcome instanceof Nack) return outcome;
     if (outcome === 'skipped') return;
 
+    if (shortProductId) {
+      this.logger.log(
+        `Order ${event.orderId} failed: insufficient stock for product ${shortProductId}`,
+      );
+      await this.publishFailed(event, 'insufficient_stock');
+      return;
+    }
+
     this.logger.log(
       `Reserved inventory for order ${event.orderId}; awaiting payment confirmation`,
     );
+  }
+
+  private async publishFailed(
+    event: OrderCreatedEvent,
+    reason: string,
+  ): Promise<void> {
+    const failed: OrderFailedEvent = {
+      orderId: event.orderId,
+      userId: event.userId,
+      reason,
+      occurredAt: new Date().toISOString(),
+    };
+    try {
+      await this.publisher.publish(OrderRoutingKey.Failed, failed);
+    } catch (error) {
+      this.logger.error(
+        `Failed to publish OrderFailed for order ${event.orderId}`,
+        error as Error,
+      );
+    }
   }
 }

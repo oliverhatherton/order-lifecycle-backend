@@ -44,13 +44,24 @@ revokes the whole family (theft detection).
 | POST | `/auth/refresh` | refresh cookie | — | `200` `{ accessToken }` + new cookie | `401` if cookie missing/invalid/reused. |
 | GET | `/auth/me` | Bearer | — | `200` `{ userId, role }` | Any authenticated user. |
 
+### Products & Cart — `/products`, `/cart` (all require `Authorization: Bearer`)
+
+| Method | Path | Body | Success | Notes |
+| --- | --- | --- | --- | --- |
+| GET | `/products` | — | `200` `ProductResponseDTO[]` | The catalog, alphabetical. Seeded on boot; `stock` is live. |
+| GET | `/cart` | — | `200` `CartResponseDTO` | The caller's open cart; created lazily if none exists. |
+| POST | `/cart/items` | `{ productId, quantity }` | `200` `CartResponseDTO` | Upsert — **sets** the quantity, doesn't add to it. `404` if product doesn't exist. |
+| DELETE | `/cart/items/:productId` | — | `200` `CartResponseDTO` | Removes the line item. |
+| POST | `/cart/checkout` | **none** | `201` `OrderResponseDTO` (status `PENDING`) | The **only** way to create an order — see §3. `409` if empty or already checked out. |
+
 ### Orders — `/orders` (all require `Authorization: Bearer`)
 
 | Method | Path | Body | Success | Notes |
 | --- | --- | --- | --- | --- |
-| POST | `/orders` | **none** | `201` `OrderResponseDTO` (status `PENDING`) | Fulfilment then runs **asynchronously** (see §3). |
 | GET | `/orders` | — | `200` `OrderResponseDTO[]` | The caller's own orders, newest first. |
 | GET | `/orders/:id` | — | `200` `OrderResponseDTO` | Owner-scoped; another user's order returns `404`. |
+| POST | `/orders/:id/pay` | **none** | `200` `OrderResponseDTO` | Confirms payment on a RESERVED order (simulated "Pay"). `409` if not RESERVED or already initiated. |
+| POST | `/orders/:id/cancel` | **none** | `200` `OrderResponseDTO` | Cancels a PENDING order, or RESERVED before payment is confirmed. Restores any reserved stock. `409` otherwise. |
 
 ### Admin — `/admin/users` (require Bearer **and** `ADMIN` role, else `403`)
 
@@ -73,15 +84,24 @@ revokes the whole family (theft detection).
 // UserResponseDTO
 { "id": "uuid", "email": "user@example.com", "role": "USER", "disabled": false, "createdAt": "2026-07-01T..." }
 
+// ProductResponseDTO
+{ "id": "uuid", "name": "Standard Widget", "sku": "WIDGET-001", "stock": 75 }
+
+// CartResponseDTO
+{ "id": "uuid", "items": [{ "productId": "uuid", "productName": "Standard Widget", "productStock": 75, "quantity": 2 }], "createdAt": "...", "updatedAt": "..." }
+
 // OrderResponseDTO
-{ "id": "uuid", "userId": "uuid", "status": "PENDING", "paymentInitiatedAt": null, "createdAt": "...", "updatedAt": "..." }
+{ "id": "uuid", "userId": "uuid", "status": "PENDING", "paymentInitiatedAt": null, "items": [{ "productId": "uuid", "productName": "Standard Widget", "quantity": 2 }], "createdAt": "...", "updatedAt": "..." }
 ```
 
 Order `status` moves through the state machine:
-`PENDING → RESERVED → PAID → COMPLETED`, or `PENDING/RESERVED → FAILED`.
+`PENDING → RESERVED → PAID → COMPLETED`, or `PENDING/RESERVED → FAILED`
+(insufficient stock or payment decline), or `PENDING/RESERVED → CANCELLED`
+(caller-initiated, only before payment is confirmed).
 `RESERVED` is a genuine pause, not a transient state — nothing advances the
-order further until the caller calls `POST /orders/{id}/pay` (see below).
-`paymentInitiatedAt` is null until that call succeeds.
+order further until the caller calls `POST /orders/{id}/pay` (see below), or
+cancels it. `paymentInitiatedAt` is null until `/pay` succeeds, and blocks
+cancellation once set.
 
 ---
 
@@ -101,30 +121,45 @@ order further until the caller calls `POST /orders/{id}/pay` (see below).
    is sent/stored. (`fetch(url, { credentials: 'include' })` /
    `axios: { withCredentials: true }`.)
 
-**Placing and tracking an order (fulfilment is asynchronous, with one manual gate!)**
+**Building a cart, then placing and tracking an order (fulfilment is asynchronous, with one manual gate!)**
 
-`POST /orders` returns immediately with `status: "PENDING"`. Inventory
-reservation happens over RabbitMQ and lands the order in `RESERVED` — then it
-**stops**. Nothing pays, completes, or fails the order until the UI calls
-`POST /orders/{id}/pay` (the simulated "Pay" button). Only after that does
-payment authorization → completion resume asynchronously. The UI must **poll**
-`GET /orders/:id` (e.g. every ~1s for a few seconds), stop polling once it sees
-`RESERVED` (show the Pay button), call the pay endpoint on click, then resume
-polling until `COMPLETED` or `FAILED`. There is no push/websocket channel —
-poll, or optimistically show a "processing" state and refresh.
+There is no bodyless `POST /orders` — an order always comes from a cart:
 
 ```
-POST /orders                 -> { id, status: "PENDING" }
-GET  /orders/{id}      (t+1) -> { status: "RESERVED" }        // pauses here — poll stops, show "Pay"
-POST /orders/{id}/pay  (t+N) -> { status: "RESERVED", paymentInitiatedAt: "..." }  // resumes fulfilment
-GET  /orders/{id}    (t+N+1) -> { status: "PAID" }
-GET  /orders/{id}    (t+N+2) -> { status: "COMPLETED" }   // terminal
+GET  /products                              -> browse the catalog
+POST /cart/items    { productId, quantity } -> add/set a line item (upsert)
+POST /cart/checkout                         -> creates the order (once only)
 ```
 
-The pay endpoint is idempotent (atomic claim in Postgres, keyed on
-`paymentInitiatedAt IS NULL`): a double-click gets a `409` on the second call,
-not a duplicate charge. Treat `409` there as "nothing to do," not an error to
-surface.
+`POST /cart/checkout` atomically claims the cart (a repeat call, or a
+concurrent double-click, gets `409`) and returns immediately with
+`status: "PENDING"`. Inventory reservation happens over RabbitMQ — a real,
+atomic per-product stock decrement, not a simulation — and lands the order in
+`RESERVED`, or `FAILED` (reason `insufficient_stock`) if a line item was
+short. Once `RESERVED`, the order **stops**. Nothing pays, completes, or
+fails it until the UI calls `POST /orders/{id}/pay` (the simulated "Pay"
+button) — or the caller cancels it with `POST /orders/{id}/cancel`, which
+restores any reserved stock. Only after `/pay` does payment authorization →
+completion resume asynchronously. The UI must **poll** `GET /orders/:id`
+(e.g. every ~1s for a few seconds), stop polling once it sees `RESERVED`
+(show the Pay/Cancel buttons), call pay or cancel on click, then resume
+polling until a terminal state (`COMPLETED`, `FAILED`, or `CANCELLED`).
+There is no push/websocket channel — poll, or optimistically show a
+"processing" state and refresh.
+
+```
+POST /cart/items {productId,qty}   -> { items: [...] }
+POST /cart/checkout                -> { id, status: "PENDING" }
+GET  /orders/{id}      (t+1)       -> { status: "RESERVED" }        // pauses here — poll stops, show "Pay"/"Cancel"
+POST /orders/{id}/pay  (t+N)       -> { status: "RESERVED", paymentInitiatedAt: "..." }  // resumes fulfilment
+GET  /orders/{id}    (t+N+1)       -> { status: "PAID" }
+GET  /orders/{id}    (t+N+2)       -> { status: "COMPLETED" }   // terminal
+```
+
+The pay, cancel, and checkout endpoints are all idempotent (atomic claims in
+Postgres): a double-click on any of them gets a `409` on the loser, not a
+duplicate charge, cancellation, or order. Treat `409` there as "nothing to
+do," not an error to surface.
 
 **Correlation IDs (nice-to-have for debugging):** send an `x-correlation-id`
 header and it is echoed on the response and stamped across every log/trace for
@@ -145,7 +180,10 @@ cp .env.example .env            # then edit secrets
 docker compose up -d            # postgres + rabbitmq + redis
 pnpm install
 pnpm start:dev                  # http://localhost:3000, docs at /docs
-pnpm admin:create               # optional: seed an ADMIN (uses ADMIN_EMAIL/PASSWORD)
+# An admin user and a demo product catalog are seeded automatically on every
+# boot (idempotent — safe across restarts). ADMIN_EMAIL/ADMIN_PASSWORD
+# control the admin's credentials; defaults match .env.example.
+# pnpm admin:create is still available if you want a *second* admin.
 ```
 
 Add the observability stack (Prometheus :9090, Grafana :3001, Jaeger :16686):
@@ -209,8 +247,10 @@ dotenv). The running app applies the same list on boot in production.
 ships a slim prod image (`node dist/main`); [`.dockerignore`](.dockerignore)
 keeps the context lean. Locally: `docker build -t olb . && docker run -p 3000:3000 --env-file .env olb`.
 
-**Admin user:** run `pnpm admin:create` once (with `ADMIN_EMAIL` /
-`ADMIN_PASSWORD` set) against the deployed DB, or promote a row manually.
+**Admin user & product catalog:** seeded automatically on every boot,
+including the deployed instance — set `ADMIN_EMAIL`/`ADMIN_PASSWORD` in the
+deployment's env (falls back to the same demo defaults as `.env.example` if
+unset). `pnpm admin:create` is only needed for an *additional* admin.
 
 ---
 

@@ -3,20 +3,31 @@ import { ConsumeMessage } from 'amqplib';
 import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { InventoryConsumer } from '@/modules/inventory/inventory.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
+import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import { OrdersService } from '@/modules/orders/services/orders.service';
+import {
+  InsufficientStockError,
+  ProductsService,
+} from '@/modules/products/products.service';
 import { OrderStatus } from '@/entities/order/OrderStatus';
-import { OrderCreatedEvent } from '@/modules/messaging/events/order-events';
+import {
+  OrderCreatedEvent,
+  OrderRoutingKey,
+} from '@/modules/messaging/events/order-events';
 
 describe('InventoryConsumer', () => {
   const inboxMock = { runOnce: jest.fn() };
   const ordersMock = { transitionOrder: jest.fn() };
+  const productsMock = { reserveStock: jest.fn() };
+  const publisherMock = { publish: jest.fn() };
 
   let consumer: InventoryConsumer;
 
   const event: OrderCreatedEvent = {
     orderId: 'order-1',
     userId: 'user-1',
+    items: [{ productId: 'product-1', quantity: 2 }],
     occurredAt: '2026-01-01T00:00:00.000Z',
   };
 
@@ -26,15 +37,17 @@ describe('InventoryConsumer', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    productsMock.reserveStock.mockResolvedValue(undefined);
     consumer = new InventoryConsumer(
       inboxMock as unknown as InboxService,
       ordersMock as unknown as OrdersService,
+      productsMock as unknown as ProductsService,
+      publisherMock as unknown as EventPublisher,
       fakeCls(),
     );
   });
 
-  it('reserves (transitions to RESERVED) and stops there — no auto-publish', async () => {
-    const manager = {} as EntityManager;
+  function runInboxWork(manager: EntityManager): void {
     inboxMock.runOnce.mockImplementation(
       async (
         _id: string,
@@ -45,13 +58,46 @@ describe('InventoryConsumer', () => {
         return true;
       },
     );
+  }
+
+  it('reserves stock, transitions to RESERVED, and stops there — no auto-publish', async () => {
+    const manager = {} as EntityManager;
+    runInboxWork(manager);
+
+    await consumer.onOrderCreated(event, messageWith('msg-1'));
+
+    expect(productsMock.reserveStock).toHaveBeenCalledWith(
+      event.items,
+      manager,
+    );
+    expect(ordersMock.transitionOrder).toHaveBeenCalledWith(
+      'order-1',
+      OrderStatus.RESERVED,
+      manager,
+    );
+    expect(publisherMock.publish).not.toHaveBeenCalled();
+  });
+
+  it('fails the order and publishes OrderFailed when stock is insufficient', async () => {
+    const manager = {} as EntityManager;
+    runInboxWork(manager);
+    productsMock.reserveStock.mockRejectedValue(
+      new InsufficientStockError('product-1'),
+    );
 
     await consumer.onOrderCreated(event, messageWith('msg-1'));
 
     expect(ordersMock.transitionOrder).toHaveBeenCalledWith(
       'order-1',
-      OrderStatus.RESERVED,
+      OrderStatus.FAILED,
       manager,
+    );
+    expect(publisherMock.publish).toHaveBeenCalledWith(
+      OrderRoutingKey.Failed,
+      expect.objectContaining({
+        orderId: 'order-1',
+        reason: 'insufficient_stock',
+      }),
     );
   });
 
@@ -61,6 +107,7 @@ describe('InventoryConsumer', () => {
     await consumer.onOrderCreated(event, messageWith('msg-1'));
 
     expect(ordersMock.transitionOrder).not.toHaveBeenCalled();
+    expect(publisherMock.publish).not.toHaveBeenCalled();
   });
 
   it('dead-letters a message with no messageId without processing it', async () => {

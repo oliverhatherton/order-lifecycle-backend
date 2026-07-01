@@ -1,4 +1,3 @@
-import request from 'supertest';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
@@ -8,10 +7,11 @@ import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
+import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
+import { ProductEntity } from '@/entities/product/ProductEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
-import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   ORDER_EXCHANGE,
   InventoryReservedEvent,
@@ -35,6 +35,8 @@ describe('Payment idempotency (e2e)', () => {
       UserEntity,
       RefreshTokenEntity,
       OrderEntity,
+      OrderItemEntity,
+      ProductEntity,
       ProcessedMessageEntity,
       PaymentAuthorizationEntity,
     ],
@@ -42,6 +44,7 @@ describe('Payment idempotency (e2e)', () => {
     truncate: [
       'payment_authorizations',
       'processed_messages',
+      'order_items',
       'orders',
       'refresh_tokens',
       'users',
@@ -74,12 +77,16 @@ describe('Payment idempotency (e2e)', () => {
   }
 
   it('charges once per order even when InventoryReserved is redelivered', async () => {
-    const token = await registerAndLogin(ctx.app);
-    const created = await request(ctx.app.getHttpServer())
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .expect(201);
-    const { id, userId } = created.body as OrderResponseDTO;
+    await registerAndLogin(ctx.app);
+    const user = await ctx.dataSource
+      .getRepository(UserEntity)
+      .findOneByOrFail({ email: 'test@example.com' });
+    const userId = user.id;
+
+    // Created directly (no cart needed — this test only cares about the
+    // RESERVED -> PAID leg, driven entirely by hand).
+    const order = await ctx.app.get(OrdersService).createOrder(userId, []);
+    const id = order.id;
 
     // Move to RESERVED so payment's RESERVED → PAID transition is legal.
     await ctx.app.get(OrdersService).transitionOrder(id, OrderStatus.RESERVED);

@@ -9,15 +9,17 @@ A complete guide for building a UI that demonstrates the capabilities of this or
 1. [Architecture Overview](#architecture-overview)
 2. [Authentication Flow](#authentication-flow)
 3. [API Integration Patterns](#api-integration-patterns)
-4. [Order Lifecycle & Polling](#order-lifecycle--polling)
-5. [Confirming Payment (the "Pay" button)](#confirming-payment-the-pay-button)
-6. [Real-Time State Simulation](#real-time-state-simulation)
-7. [Error Handling & Recovery](#error-handling--recovery)
-8. [Admin Panel](#admin-panel)
-9. [Observability Integration](#observability-integration)
-10. [Metrics History (Durable, Resolution-Bucketed)](#metrics-history-durable-resolution-bucketed)
-11. [Example Implementation (React)](#example-implementation-react)
-12. [Demo Scenarios](#demo-scenarios)
+4. [Shopping Cart & Checkout](#shopping-cart--checkout)
+5. [Order Lifecycle & Polling](#order-lifecycle--polling)
+6. [Confirming Payment (the "Pay" button)](#confirming-payment-the-pay-button)
+7. [Cancelling an Order](#cancelling-an-order)
+8. [Real-Time State Simulation](#real-time-state-simulation)
+9. [Error Handling & Recovery](#error-handling--recovery)
+10. [Admin Panel](#admin-panel)
+11. [Observability Integration](#observability-integration)
+12. [Metrics History (Durable, Resolution-Bucketed)](#metrics-history-durable-resolution-bucketed)
+13. [Example Implementation (React)](#example-implementation-react)
+14. [Demo Scenarios](#demo-scenarios)
 
 ---
 
@@ -26,10 +28,10 @@ A complete guide for building a UI that demonstrates the capabilities of this or
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                           UI (Browser)                           │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │  Auth Module     │  │  Orders Module   │  │ Admin Panel  │  │
-│  │  (Login/Signup)  │  │  (Create/Track)  │  │  (Manage)    │  │
-│  └──────────────────┘  └──────────────────┘  └──────────────┘  │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────────┐ │
+│  │ Auth Module│ │Cart/Catalog│ │Orders Module│ │ Admin Panel  │ │
+│  │(Login/Signup)│(Browse/Add)│ │(Track/Cancel)│ │  (Manage)    │ │
+│  └────────────┘ └────────────┘ └────────────┘ └──────────────┘ │
 └────────┬─────────────────────────────────────────────────────┬──┘
          │ HTTP + Cookies (credentials: include)              │
          ▼                                                     ▼
@@ -37,33 +39,43 @@ A complete guide for building a UI that demonstrates the capabilities of this or
     │            NestJS REST API (Base: /)                          │
     │  ┌─────────────────────────────────────────────────────────┐  │
     │  │ Auth Endpoints            │ Order Endpoints             │  │
-    │  │ ├─ POST /auth/register    │ ├─ POST /orders            │  │
-    │  │ ├─ POST /auth/login       │ ├─ GET  /orders            │  │
-    │  │ ├─ POST /auth/refresh     │ ├─ GET  /orders/:id        │  │
-    │  │ ├─ GET  /auth/me          │ └─ POST /orders/:id/pay    │  │
+    │  │ ├─ POST /auth/register    │ ├─ GET  /orders            │  │
+    │  │ ├─ POST /auth/login       │ ├─ GET  /orders/:id        │  │
+    │  │ ├─ POST /auth/refresh     │ ├─ POST /orders/:id/pay    │  │
+    │  │ ├─ GET  /auth/me          │ └─ POST /orders/:id/cancel │  │
     │  │ └─                         │                            │  │
-    │  │ Admin Endpoints            │ Observability             │  │
-    │  │ ├─ GET  /admin/users      │ ├─ GET  /health           │  │
-    │  │ ├─ PATCH /admin/users/:id │ ├─ GET  /metrics (Prom)   │  │
-    │  │ └─ /disable|enable        │ ├─ GET  /metrics/history  │  │
+    │  │ Cart & Catalog             │ Admin Endpoints            │  │
+    │  │ ├─ GET  /products         │ ├─ GET  /admin/users       │  │
+    │  │ ├─ GET  /cart             │ ├─ PATCH /admin/users/:id  │  │
+    │  │ ├─ POST /cart/items       │ └─ /disable|enable         │  │
+    │  │ ├─ DELETE /cart/items/:id │                             │  │
+    │  │ └─ POST /cart/checkout    │ Observability              │  │
+    │  │                            │ ├─ GET  /health           │  │
+    │  │                            │ ├─ GET  /metrics (Prom)   │  │
+    │  │                            │ ├─ GET  /metrics/history  │  │
     │  │                            │ └─ Tracing (OTEL)         │  │
     │  └─────────────────────────────────────────────────────────┘  │
     │                                                                 │
     │  ┌─────────────────────────────────────────────────────────┐  │
     │  │ Backing Services                                         │  │
-    │  │  ├─ PostgreSQL (Order, User, Auth, Payment, Metric      │  │
-    │  │  │   history records)                                   │  │
+    │  │  ├─ PostgreSQL (Product, Cart, Order, User, Auth,       │  │
+    │  │  │   Payment, Metric history records)                   │  │
     │  │  ├─ RabbitMQ (Event-driven async fulfilment)           │  │
     │  │  └─ Redis (Order status cache, read-through)           │  │
     │  └─────────────────────────────────────────────────────────┘  │
     │                                                                 │
     │  ┌─────────────────────────────────────────────────────────┐  │
     │  │ Async Event Chain (RabbitMQ consumers)                  │  │
-    │  │  order.created ──▶ [inventory] ──▶ order RESERVED       │  │
+    │  │  cart checkout ──▶ order.created ──▶ [inventory]        │  │
+    │  │                     (reserves real per-product stock)   │  │
+    │  │                                        │                 │  │
+    │  │                            ├─ short on stock ──▶ FAILED │  │
+    │  │                            └─ reserved ──▶ order RESERVED│ │
     │  │                                        │                 │  │
     │  │                          ⏸  PAUSED — waits here for      │  │
-    │  │                          POST /orders/:id/pay (the UI's  │  │
-    │  │                          simulated "Pay" button)         │  │
+    │  │                          POST /orders/:id/pay, OR can    │  │
+    │  │                          be POST /orders/:id/cancel'd    │  │
+    │  │                          (restores the reserved stock)   │  │
     │  │                                        │                 │  │
     │  │                                        ▼                 │  │
     │  │                                    [payment]  ──▶ order_ │  │
@@ -76,17 +88,28 @@ A complete guide for building a UI that demonstrates the capabilities of this or
     │  │                                                           │  │
     │  │  (Each step updates DB, order status advances)           │  │
     │  └─────────────────────────────────────────────────────────┘  │
+    │                                                                 │
+    │  ┌─────────────────────────────────────────────────────────┐  │
+    │  │ Boot-time (every start, idempotent)                      │  │
+    │  │  ├─ Seeds an admin user (ADMIN_EMAIL/ADMIN_PASSWORD)    │  │
+    │  │  ├─ Seeds a demo product catalog (insert-if-missing)    │  │
+    │  │  └─ Cron: tops up any product whose stock drops low     │  │
+    │  └─────────────────────────────────────────────────────────┘  │
     └──────────────────────────────────────────────────────────────┘
 ```
 
 **Key Design Decisions:**
 - **No WebSockets**: Status updates are polled (simpler, stateless backend)
+- **Orders come from a cart, not a bare `POST /orders`**: add products to a cart, then `POST /cart/checkout` — a one-shot action — creates the order. There is no other way to create an order.
+- **Real stock, not simulated**: inventory reservation atomically decrements each line item's product stock; insufficient stock fails the order (`insufficient_stock`) instead of always succeeding.
+- **Cancellable before payment**: `POST /orders/:id/cancel` works from PENDING, or RESERVED as long as "Pay" hasn't been clicked yet; cancelling a RESERVED order restores its stock.
 - **Event-Driven Backend, with one manual gate**: Reservation happens automatically; the order then pauses in RESERVED until the caller calls `POST /orders/:id/pay` (the UI's simulated "Pay" button), which resumes the async chain
+- **Self-seeding, self-restocking**: an admin user and a demo product catalog exist on every boot with no manual step; a background job tops up any product that runs low
 - **Durable metric history**: `/metrics` (Prometheus) is in-memory and resets on restart; `/metrics/history` is backed by a Postgres table and survives restarts, pre-aggregated by resolution so responses stay small
 - **Httponly Cookies**: Refresh token is never exposed to JavaScript
 - **Access Token in Memory**: Limits XSS blast radius
 - **CORS & Cookies**: Supports both same-origin and cross-origin deployments
-- **Idempotency**: Payment authorization is idempotent per order (safe to retry); the pay endpoint itself is idempotent too — a double-click can't double-charge
+- **Idempotency**: Payment authorization is idempotent per order (safe to retry); the pay, cancel, and checkout endpoints are all idempotent too — a double-click can't double-charge, double-cancel, or create two orders from one cart
 
 ---
 
@@ -217,6 +240,131 @@ Response (error):
 
 ---
 
+## Shopping Cart & Checkout
+
+Orders always originate from a cart. There is no `POST /orders` — you add
+products to a cart, then check it out. A cart is single-use: once checked
+out, it's permanently closed, and the next cart action lazily starts a fresh
+one.
+
+### 1. Browsing the Catalog
+
+```
+GET /products
+
+Request:
+  Headers:
+    Authorization: Bearer <accessToken>
+
+Response:
+  200
+  [
+    { "id": "uuid", "name": "Standard Widget", "sku": "WIDGET-001", "stock": 75 },
+    { "id": "uuid", "name": "Mini Gizmo", "sku": "GIZMO-001", "stock": 100 },
+    ...
+  ]
+
+Alphabetical by name. Seeded on boot (~12 demo products) and self-restocking
+(see the Architecture Overview) — `stock` is live and can change between
+reads as other orders reserve, cancel, or fail, or the background
+replenishment job tops a low product back up.
+```
+
+### 2. Viewing / Building the Cart
+
+```
+GET /cart
+
+Response:
+  200
+  {
+    "id": "uuid",
+    "items": [
+      { "productId": "uuid", "productName": "Standard Widget", "productStock": 75, "quantity": 2 }
+    ],
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+
+Creates an empty cart lazily if the caller doesn't have an open one yet —
+always safe to call on page load.
+```
+
+```
+POST /cart/items
+Body: { "productId": "uuid", "quantity": 2 }
+
+Response: 200, the updated cart (same shape as GET /cart).
+
+This SETS the quantity — it's an upsert, not an increment. If the UI already
+knows the cart's current quantity for a product (e.g. from GET /cart), send
+the new total, not a delta. Errors: 404 if the product doesn't exist, 400 if
+quantity < 1.
+```
+
+```
+DELETE /cart/items/:productId
+
+Response: 200, the updated cart with that line item removed.
+```
+
+### 3. Checkout — the One-Shot Action
+
+```
+POST /cart/checkout
+
+Response (success):
+  201
+  {
+    "id": "uuid",
+    "userId": "uuid",
+    "status": "PENDING",
+    "paymentInitiatedAt": null,
+    "items": [
+      { "productId": "uuid", "productName": "Standard Widget", "quantity": 2 }
+    ],
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+
+This is exactly the old POST /orders response shape, now with `items`.
+Fulfilment (reserve → pay → complete) runs asynchronously from here — poll
+GET /orders/{id} exactly as before.
+
+Errors:
+  409  Cart is empty (nothing added yet), OR the cart has already been
+       checked out. Both mean "nothing to do" — for the already-checked-out
+       case specifically, this is the guarantee that a cart can only ever be
+       checked out once, even under a double-click: the server claims the
+       cart atomically, so only one concurrent checkout request can ever
+       win. Don't retry a 409 here; if it was a double-click, the first
+       request's response is the real order.
+```
+
+```typescript
+const checkout = async () => {
+  const resp = await fetchWithAuth('/cart/checkout', { method: 'POST' });
+  if (resp.status === 409) {
+    // Either empty or already checked out — surface as "nothing to check
+    // out" rather than a hard error.
+    return null;
+  }
+  if (!resp.ok) throw new Error('Checkout failed');
+  return (await resp.json()); // the new order — start polling it
+};
+```
+
+### 4. Insufficient Stock
+
+If a checked-out order's reservation can't be satisfied (someone else beat
+you to the last few units), the order goes straight to `FAILED` instead of
+`RESERVED` — same as any other fulfilment failure. Poll `GET /orders/{id}`
+and treat `FAILED` the same way regardless of cause; there's no separate
+signal to distinguish "payment declined" from "insufficient stock" other
+than checking back with the catalog for updated stock numbers.
+
+---
+
 ## Order Lifecycle & Polling
 
 ### 1. Order State Machine
@@ -227,79 +375,71 @@ Happy path:
                                                   │
                                     ⏸  PAUSED — waits for the caller to
                                     POST /orders/:id/pay (simulated "Pay")
+                                    or POST /orders/:id/cancel
                                                   │
                                                   ▼
                                     ──[payment auth]──> PAID ──[fulfil]──> COMPLETED
 
 Failure paths:
-  PENDING ──[inventory fails]──> FAILED
+  PENDING ──[inventory fails: insufficient stock]──> FAILED
   RESERVED ──[payment fails, only after /pay is called]──> FAILED
 
-Terminal states: COMPLETED, FAILED (no outgoing transitions)
+Cancellation paths (caller-initiated, before payment is confirmed):
+  PENDING ──[cancel]──> CANCELLED
+  RESERVED ──[cancel, only while paymentInitiatedAt is null]──> CANCELLED
+
+Terminal states: COMPLETED, FAILED, CANCELLED (no outgoing transitions)
 ```
 
-**RESERVED is now a real pause, not a transient state.** Inventory reservation
-still happens automatically and immediately after `POST /orders`. But nothing
-advances the order past RESERVED until the UI calls
-`POST /orders/{id}/pay` — an order can sit in RESERVED indefinitely with no
-background process touching it. This is what makes the "Pay" button
-meaningful: it's the one thing that unblocks payment authorization and
-fulfilment, not just a UI affordance layered on top of an already-automatic
-flow.
+**RESERVED is a real pause, not a transient state.** Inventory reservation
+happens automatically right after checkout. But nothing advances the order
+past RESERVED until the UI calls `POST /orders/{id}/pay` — an order can sit
+in RESERVED indefinitely with no background process touching it. That's what
+makes the "Pay" button meaningful: it's the one thing that unblocks payment
+authorization and fulfilment. While waiting, the order can also be cancelled
+— see [Cancelling an Order](#cancelling-an-order).
 
 ### 2. Creating an Order
 
+There is no `POST /orders`. Orders are created by checking out a cart — see
+[Shopping Cart & Checkout](#shopping-cart--checkout). `POST /cart/checkout`
+returns the exact same shape the old `POST /orders` did (now with `items`):
+
 ```
-POST /orders
-
-Request:
-  Headers:
-    Authorization: Bearer <accessToken>
-  Body: (empty)
-
-Response (immediate):
-  201
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "userId": "...",
-    "status": "PENDING",
-    "paymentInitiatedAt": null,
-    "createdAt": "2026-07-01T14:30:00.000Z",
-    "updatedAt": "2026-07-01T14:30:00.000Z"
-  }
-
-Returns immediately — inventory reservation runs async in the background and
-lands the order in RESERVED within a second or two. Nothing further happens
-until the caller confirms payment (see the next section).
+POST /cart/checkout   ->  201, { id, userId, status: "PENDING", paymentInitiatedAt: null, items: [...], createdAt, updatedAt }
 ```
+
+Everything from here — polling, pay, cancel — works identically regardless
+of how many line items the order has.
 
 ### 3. Polling for Status
 
 ```
-After POST /orders, poll GET /orders/:id in a loop until the order reaches
+After checkout, poll GET /orders/:id in a loop until the order reaches
 RESERVED (then wait for the "Pay" click), or a terminal state:
 
 while (!isTerminal(order.status) && order.status !== 'RESERVED') {
   await sleep(1000);  // Poll every ~1 second for a few seconds
   order = await fetch(`GET /orders/${orderId}`, { headers: { Authorization: ... }});
 }
-// order.status is now RESERVED (show the "Pay" button) or FAILED.
+// order.status is now RESERVED (show "Pay" / "Cancel") or a terminal state.
 
-Terminal states: COMPLETED, FAILED
+Terminal states: COMPLETED, FAILED, CANCELLED
 
 Timeline (typical):
-  t+0s:   POST /orders            -> { status: "PENDING" }
-  t+1s:   GET /orders/:id         -> { status: "RESERVED" }   (inventory done — polling stops here, UI shows "Pay")
-  ...     (order waits indefinitely until the user clicks "Pay")
+  t+0s:   POST /cart/checkout     -> { status: "PENDING" }
+  t+1s:   GET /orders/:id         -> { status: "RESERVED" }   (inventory reserved — polling stops here, UI shows "Pay"/"Cancel")
+  ...     (order waits indefinitely until the user clicks "Pay" or "Cancel")
   t+Ns:   POST /orders/:id/pay    -> { status: "RESERVED", paymentInitiatedAt: "..." }  (resumes fulfilment; poll again)
   t+N+1s: GET /orders/:id         -> { status: "PAID" }        (payment done)
   t+N+2s: GET /orders/:id         -> { status: "COMPLETED" }   (fulfillment done)
 
 Variations:
-  - Inventory fails:    PENDING -> FAILED (at t+1s)
-  - Payment fails:      RESERVED -> FAILED (only after /pay is called)
-  - Cache hit:          Status may not advance on every poll (order is still in queue)
-  - Server load:        May take longer (RabbitMQ backoff, retries)
+  - Insufficient stock:  PENDING -> FAILED (at t+1s) — someone else took the last few units
+  - Payment fails:       RESERVED -> FAILED (only after /pay is called)
+  - Cancelled:            PENDING or RESERVED -> CANCELLED (only if the caller cancels; never automatic)
+  - Cache hit:            Status may not advance on every poll (order is still in queue)
+  - Server load:          May take longer (RabbitMQ backoff, retries)
 ```
 
 ### 4. Polling Strategy (React Example)
@@ -314,8 +454,8 @@ const isAwaitingAction = (status) =>
   status === 'RESERVED' || isTerminal(status);
 
 const createAndPollOrder = async () => {
-  // Create
-  const created = await fetch('/orders', {
+  // Checkout the cart (assumes items were already added via POST /cart/items)
+  const created = await fetch('/cart/checkout', {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}` },
     credentials: 'include',  // Send refresh cookie
@@ -434,6 +574,63 @@ const payForOrder = async (orderId: string) => {
   setOrder(order); // still RESERVED — resume the polling loop from here
 };
 ```
+
+---
+
+## Cancelling an Order
+
+While an order is PENDING or RESERVED-but-not-yet-paid, the caller can back
+out entirely instead of paying — a "Cancel" button next to "Pay".
+
+```
+POST /orders/:id/cancel
+
+Request:
+  Headers:
+    Authorization: Bearer <accessToken>
+  Body: (empty)
+
+Response (success):
+  200
+  {
+    "id": "...",
+    "status": "CANCELLED",
+    "paymentInitiatedAt": null,
+    "items": [...],
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+
+If the order was RESERVED, its reserved stock is restored automatically —
+no separate action needed.
+
+Errors:
+  404  Order doesn't exist or isn't the caller's.
+  409  Order isn't cancellable — either it's already PAID/COMPLETED/FAILED/
+       CANCELLED, or payment has already been initiated (POST /orders/:id/pay
+       was already called). Treat as "too late" — hide the Cancel button
+       and resume polling rather than retrying.
+```
+
+```typescript
+const cancelOrder = async (orderId: string) => {
+  const resp = await fetchWithAuth(`/orders/${orderId}/cancel`, { method: 'POST' });
+  if (resp.status === 409) {
+    // Too late to cancel — resume polling instead of showing an error.
+    return;
+  }
+  if (!resp.ok) throw new Error('Failed to cancel order');
+  setOrder(await resp.json()); // now CANCELLED — a terminal state, stop polling
+};
+```
+
+**Why RESERVED-but-payment-initiated can't be cancelled:** once "Pay" has
+been clicked, payment authorization may already be mid-flight asynchronously
+— cancelling underneath it would race a charge that might already be
+happening. The same atomic-claim pattern `/pay` uses (an SQL `UPDATE ...
+WHERE ... AND "paymentInitiatedAt" IS NULL`) means cancel and pay can never
+both win for the same order: whichever the caller (or a double-click) hits
+first locks out the other with a 409.
 
 ---
 
@@ -1077,16 +1274,24 @@ export const useFetchWithAuth = () => {
 import { useState, useCallback } from 'react';
 import { useFetchWithAuth } from './useFetchWithAuth';
 
+interface OrderItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+}
+
 interface Order {
   id: string;
   userId: string;
-  status: 'PENDING' | 'RESERVED' | 'PAID' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING' | 'RESERVED' | 'PAID' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   paymentInitiatedAt: string | null;
+  items: OrderItem[];
   createdAt: string;
   updatedAt: string;
 }
 
-const isTerminal = (status: string) => ['COMPLETED', 'FAILED'].includes(status);
+const isTerminal = (status: string) =>
+  ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status);
 // Polling stops here too — RESERVED means "waiting for the user", not the server.
 const isAwaitingAction = (status: string) => status === 'RESERVED' || isTerminal(status);
 
@@ -1127,18 +1332,22 @@ export const useOrderCreation = () => {
     [fetchWithAuth],
   );
 
-  const createAndPollOrder = useCallback(async () => {
+  // 1. Checkout the cart (assumes items were already added via
+  // POST /cart/items in a separate cart-building screen).
+  const checkoutAndPollOrder = useCallback(async () => {
     setError(null);
     try {
-      // 1. Create order
-      const createResp = await fetchWithAuth('/orders', { method: 'POST' });
-      if (!createResp.ok) throw new Error('Failed to create order');
+      const checkoutResp = await fetchWithAuth('/cart/checkout', { method: 'POST' });
+      if (checkoutResp.status === 409) {
+        throw new Error('Cart is empty or already checked out');
+      }
+      if (!checkoutResp.ok) throw new Error('Checkout failed');
 
-      const created = (await createResp.json()) as Order;
+      const created = (await checkoutResp.json()) as Order;
       setOrder(created);
       setIsPolling(true);
 
-      // 2. Poll until RESERVED (show "Pay") or a terminal state.
+      // 2. Poll until RESERVED (show "Pay"/"Cancel") or a terminal state.
       await pollUntil(created, isAwaitingAction);
       setIsPolling(false);
     } catch (err) {
@@ -1172,7 +1381,27 @@ export const useOrderCreation = () => {
     }
   }, [order, fetchWithAuth, pollUntil]);
 
-  return { order, isPolling, error, createAndPollOrder, payForOrder };
+  // 4. Cancel (the "Cancel" button) — only meaningful while RESERVED and
+  // payment hasn't been confirmed; the backend enforces this with a 409.
+  const cancelOrder = useCallback(async () => {
+    if (!order) return;
+    setError(null);
+    try {
+      const cancelResp = await fetchWithAuth(`/orders/${order.id}/cancel`, {
+        method: 'POST',
+      });
+      if (cancelResp.status === 409) {
+        // Too late to cancel — resume polling instead of erroring.
+        return;
+      }
+      if (!cancelResp.ok) throw new Error('Failed to cancel order');
+      setOrder((await cancelResp.json()) as Order); // CANCELLED — terminal, stop polling.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    }
+  }, [order, fetchWithAuth]);
+
+  return { order, isPolling, error, checkoutAndPollOrder, payForOrder, cancelOrder };
 };
 ```
 
@@ -1183,15 +1412,16 @@ export const useOrderCreation = () => {
 import { useOrderCreation } from './useOrderCreation';
 
 export const OrderPage = () => {
-  const { order, isPolling, error, createAndPollOrder, payForOrder } = useOrderCreation();
+  const { order, isPolling, error, checkoutAndPollOrder, payForOrder, cancelOrder } =
+    useOrderCreation();
 
   return (
     <div className="order-page">
-      <h1>Create an Order</h1>
+      <h1>Checkout</h1>
 
       {!order ? (
-        <button onClick={createAndPollOrder} disabled={isPolling}>
-          Create Order
+        <button onClick={checkoutAndPollOrder} disabled={isPolling}>
+          Check Out Cart
         </button>
       ) : (
         <div className="order-status">
@@ -1199,6 +1429,14 @@ export const OrderPage = () => {
           <div className={`status ${order.status.toLowerCase()}`}>
             {order.status}
           </div>
+
+          <ul className="line-items">
+            {order.items.map((item) => (
+              <li key={item.productId}>
+                {item.quantity} × {item.productName}
+              </li>
+            ))}
+          </ul>
 
           {isPolling && (
             <div className="progress">
@@ -1223,8 +1461,12 @@ export const OrderPage = () => {
             <div className="ready-to-pay">
               <p>✓ Inventory reserved — ready to pay.</p>
               <button onClick={payForOrder}>Pay</button>
+              <button onClick={cancelOrder} className="secondary">Cancel</button>
             </div>
           )}
+
+          {/* PENDING + not polling shouldn't normally happen (still async), but
+              cancel is also valid here — show it if you poll less aggressively. */}
 
           {!isPolling && order.status === 'COMPLETED' && (
             <div className="success">
@@ -1234,7 +1476,13 @@ export const OrderPage = () => {
 
           {!isPolling && order.status === 'FAILED' && (
             <div className="error">
-              ✗ Order failed. Please try again.
+              ✗ Order failed (declined, or a line item ran out of stock). Please try again.
+            </div>
+          )}
+
+          {!isPolling && order.status === 'CANCELLED' && (
+            <div className="cancelled">
+              Order cancelled.
             </div>
           )}
 
@@ -1340,49 +1588,61 @@ export const AdminUsersPanel = () => {
 
 **What to show:**
 1. User registers and logs in
-2. Creates an order (shows PENDING immediately)
-3. Polling animation: "Checking inventory..." for ~1 second
-4. Order reaches RESERVED — polling stops, a "Pay" button appears
-5. User clicks "Pay" → `POST /orders/{id}/pay`, polling resumes
-6. Order progresses: RESERVED → PAID → COMPLETED (takes ~2 seconds)
-7. Success screen with order ID
+2. Browses the catalog (`GET /products`), adds an item to the cart (`POST /cart/items`)
+3. Checks out (`POST /cart/checkout`) — order shows PENDING immediately
+4. Polling animation: "Checking inventory..." for ~1 second
+5. Order reaches RESERVED — polling stops, "Pay" and "Cancel" buttons appear
+6. User clicks "Pay" → `POST /orders/{id}/pay`, polling resumes
+7. Order progresses: RESERVED → PAID → COMPLETED (takes ~2 seconds)
+8. Success screen with order ID and its line items
 
 **Backend timeline:**
 ```
-t+0s:    POST /orders          → status=PENDING
-t+~1s:   Inventory reserve     → status=RESERVED   (⏸ pauses here — no background process advances it)
+t+0s:    POST /cart/checkout    → status=PENDING (real stock decrement queued)
+t+~1s:   Inventory reserve      → status=RESERVED   (⏸ pauses here — no background process advances it)
 ...      (waits indefinitely for the user)
-t+Ns:    POST /orders/:id/pay  → status=RESERVED, paymentInitiatedAt set (resumes fulfilment)
-t+N+~1s: Payment auth          → status=PAID
-t+N+~2s: Fulfillment           → status=COMPLETED
+t+Ns:    POST /orders/:id/pay   → status=RESERVED, paymentInitiatedAt set (resumes fulfilment)
+t+N+~1s: Payment auth           → status=PAID
+t+N+~2s: Fulfillment            → status=COMPLETED
 ```
 
 **UI talking points:**
+- "Orders come from a real cart with real products and real stock — not a bodyless POST"
+- "The cart can only be checked out once — an atomic Postgres claim, not a UI-side flag"
 - "Async fulfilment, with one deliberate manual gate: the order reserves automatically, but nothing charges until the user clicks Pay"
 - "The pause is real, not simulated in the UI — the backend genuinely does nothing to a RESERVED order until /pay is called"
+- "While paused, the order can also be cancelled — which restores its reserved stock"
 - "The pay endpoint is idempotent — a double-click can't double-charge (atomic claim in Postgres)"
 - "Polling pattern keeps the UI responsive without WebSockets"
 - "Correlation IDs (if shown) link this request through logs and traces"
 
 ---
 
-### Scenario 2: Order Failure (Payment Declined)
+### Scenario 2: Order Failure (Payment Declined, or Out of Stock)
 
-**What to show:**
-1. User creates an order
+**What to show (payment decline):**
+1. User checks out a cart
 2. Order reaches RESERVED state (inventory succeeds) — "Pay" button appears
 3. User clicks "Pay"
 4. Payment is declined during the async authorization that follows
 5. Order transitions to FAILED state
-6. UI shows error screen, user can retry with a new order
+6. UI shows error screen, user can build a new cart and retry
 
 **Triggered by:**
 Override the `PaymentGateway.charge()` method in the test to return `{ authorized: false, declineReason: 'insufficient_funds' }`. Or patch a running instance via the test suite.
+
+**What to show (out of stock):**
+1. Add more units of a product to the cart than its current `stock`
+2. Check out — order shows PENDING
+3. Inventory reservation fails atomically (nothing is decremented) — order goes straight to FAILED with reason `insufficient_stock`, never touching RESERVED
+4. UI shows the same error screen as a payment decline (there's no separate signal for "why" beyond the order never reaching RESERVED)
 
 **UI talking points:**
 - "Idempotency ensures safe retries—the same order ID won't charge twice"
 - "Partial failure is handled gracefully—inventory is reserved but the order can be retried"
 - "Even after a decline, `paymentInitiatedAt` stays set — the order can't be paid again, only recreated"
+- "Insufficient stock fails the same way payment decline does — no separate error branch to build for"
+- "A failed reservation leaves stock untouched — nothing partially decrements, even across multiple line items"
 
 ---
 
@@ -1391,7 +1651,7 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
 **What to show:**
 1. User logs in and gets a token (15 min lifetime)
 2. Wait or mock token expiry
-3. User attempts an action (POST /orders or GET /orders)
+3. User attempts an action (POST /cart/checkout or GET /orders)
 4. API returns 401
 5. UI automatically calls `/auth/refresh` (cookie rides along)
 6. New token received, original request retried
@@ -1517,10 +1777,23 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
      -b cookies.txt
    ```
 
-3. **Test Order Flow:**
+3. **Test Cart & Order Flow:**
    ```bash
-   # Create order
-   curl -X POST http://localhost:3000/orders \
+   # Browse the (seeded-on-boot) catalog
+   curl http://localhost:3000/products \
+     -H "Authorization: Bearer <token>" \
+     -b cookies.txt
+   # -> pick a "id" from the response as <productId> below
+
+   # Add a product to the cart
+   curl -X POST http://localhost:3000/cart/items \
+     -H "Authorization: Bearer <token>" \
+     -H "Content-Type: application/json" \
+     -d '{"productId":"<productId>","quantity":2}' \
+     -b cookies.txt
+
+   # Check out — creates the order (once only; a repeat call 409s)
+   curl -X POST http://localhost:3000/cart/checkout \
      -H "Authorization: Bearer <token>" \
      -b cookies.txt
 
@@ -1530,7 +1803,8 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
      -b cookies.txt
 
    # Confirm payment once RESERVED (the simulated "Pay" click) — required to
-   # progress any further; nothing does this automatically
+   # progress any further; nothing does this automatically. Or cancel instead:
+   #   curl -X POST http://localhost:3000/orders/<id>/cancel ...
    curl -X POST http://localhost:3000/orders/<id>/pay \
      -H "Authorization: Bearer <token>" \
      -b cookies.txt
@@ -1543,7 +1817,7 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
 
 4. **Integrate into React:**
    - Copy the React hooks from the Example Implementation section
-   - Build pages for Auth (Register/Login), Orders (Create/List), Admin (User Management)
+   - Build pages for Auth (Register/Login), Catalog/Cart (Browse/Add/Checkout), Orders (Track/Pay/Cancel), Admin (User Management)
    - Wire up polling logic with the order creation component
    - Test session refresh by setting a short token lifetime
 
@@ -1562,6 +1836,10 @@ Override the `PaymentGateway.charge()` method in the test to return `{ authorize
 | Order status never advances past PENDING | RabbitMQ connection issue | Check `RABBITMQ_URL` env var; ensure CloudAMQP/RabbitMQ is running |
 | Order stuck in RESERVED forever | This is expected — RESERVED no longer auto-advances. Call `POST /orders/:id/pay` | Not a bug; wire up the "Pay" button (see [Confirming Payment](#confirming-payment-the-pay-button)) |
 | `POST /orders/:id/pay` returns 409 | Order isn't RESERVED, or payment was already initiated for it | Treat as a no-op: disable the button and resume polling — it's not an error to surface to the user |
+| `POST /orders/:id/cancel` returns 409 | Order isn't PENDING/RESERVED, or payment was already initiated | Treat as "too late" — hide the Cancel button and resume polling |
+| `POST /cart/checkout` returns 409 | Cart is empty, or was already checked out | If empty, prompt the user to add items; if already checked out, that cart is done — `GET /cart` now returns a fresh one |
+| Order goes straight to FAILED without ever showing RESERVED | Insufficient stock — a line item's quantity exceeds `GET /products`'s current `stock` | Expected; not distinguishable from a payment decline via the API. Refresh the catalog and rebuild the cart with a smaller quantity |
+| `POST /orders` returns 404 | That endpoint no longer exists | Orders now come from `POST /cart/checkout` (see [Shopping Cart & Checkout](#shopping-cart--checkout)) |
 | `/metrics/history` returns an empty `points` array | No samples recorded yet in the requested window, or that metric hasn't fired | Trigger the relevant activity (e.g. create+pay an order for `orders_terminal`) and retry; widen `from`/`to` |
 | Token refresh fails even though token expired | Refresh cookie is missing or httpOnly misconfiguration | Check browser DevTools Cookies; ensure the cookie was set with `HttpOnly` flag |
 | Admin endpoints return 403 even with admin user | Role not propagated in JWT | Check `auth.service.ts` that `role` is included in the JWT payload |

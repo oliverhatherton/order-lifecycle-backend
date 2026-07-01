@@ -12,7 +12,6 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
-  ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -36,24 +35,6 @@ import type { JwtPayload } from '@/modules/auth/types/JwtPayload';
 @UseGuards(JwtAuthGuard)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
-
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Create a new PENDING order for the caller',
-    description:
-      'Takes no body. Returns immediately with status PENDING; fulfilment ' +
-      '(reserve → pay → complete) then runs asynchronously, so poll GET ' +
-      '/orders/{id} to observe the status advance.',
-  })
-  @ApiCreatedResponse({
-    type: OrderResponseDTO,
-    description: 'The created order, in PENDING state.',
-  })
-  async create(@CurrentUser() user: JwtPayload): Promise<OrderResponseDTO> {
-    const order = await this.ordersService.createOrder(user.sub);
-    return toOrderResponseDTO(order);
-  }
 
   @Get()
   @ApiOperation({ summary: "List the caller's own orders (newest first)" })
@@ -108,6 +89,33 @@ export class OrdersController {
     @CurrentUser() user: JwtPayload,
   ): Promise<OrderResponseDTO> {
     const order = await this.ordersService.initiatePayment(id, user.sub);
+    return toOrderResponseDTO(order);
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cancel a PENDING or (pre-payment) RESERVED order',
+    description:
+      'Allowed while PENDING, or RESERVED as long as payment has not been ' +
+      'confirmed yet (POST /orders/{id}/pay hasn’t been called). Restores ' +
+      'any reserved stock. Once payment is confirmed, or the order has ' +
+      'reached PAID/COMPLETED/FAILED, cancellation is no longer possible.',
+  })
+  @ApiOkResponse({
+    type: OrderResponseDTO,
+    description: 'The now-CANCELLED order.',
+  })
+  @ApiBadRequestResponse({ description: 'Malformed order id (not a UUID)' })
+  @ApiNotFoundResponse({ description: 'No such order owned by the caller' })
+  @ApiConflictResponse({
+    description: 'Order is not cancellable in its current state.',
+  })
+  async cancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<OrderResponseDTO> {
+    const order = await this.ordersService.cancelOrder(id, user.sub);
     return toOrderResponseDTO(order);
   }
 }

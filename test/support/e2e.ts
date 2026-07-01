@@ -20,10 +20,13 @@ import {
   StartedRabbitMQContainer,
 } from '@testcontainers/rabbitmq';
 import { RedisContainer, StartedRedisContainer } from '@testcontainers/redis';
+import { randomUUID } from 'node:crypto';
 import { buildValidationPipe } from '@/common/validation/validation-pipe';
 import { RegisterDTOMother } from '@/modules/auth/dto/RegisterDTOMother';
 import { LoginDTOMother } from '@/modules/auth/dto/LoginDTOMother';
 import { AccessTokenResponseDTO } from '@/modules/auth/dto/AccessTokenResponseDTO';
+import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
+import { ProductEntity } from '@/entities/product/ProductEntity';
 import { REFRESH_TOKEN_COOKIE } from '@/modules/auth/auth.constants';
 import { CacheModule } from '@/modules/cache/cache.module';
 import { REDIS_CLIENT } from '@/modules/cache/redis.provider';
@@ -237,6 +240,50 @@ export async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error('waitFor: condition not met within timeout');
+}
+
+/**
+ * Inserts a product directly (bypassing the seed/HTTP layer) so a test has
+ * real, addressable stock to check out against. Requires ProductEntity in
+ * the suite's `entities` list.
+ */
+export async function createProduct(
+  dataSource: DataSource,
+  overrides: Partial<{ name: string; sku: string; stock: number }> = {},
+): Promise<string> {
+  const repository = dataSource.getRepository(ProductEntity);
+  const product = await repository.save(
+    repository.create({
+      name: overrides.name ?? 'Test Widget',
+      sku: overrides.sku ?? `TEST-${randomUUID()}`,
+      stock: overrides.stock ?? 100,
+    }),
+  );
+  return product.id;
+}
+
+/**
+ * The cart-based replacement for the old bodyless `POST /orders`: adds one
+ * line item to the caller's cart and checks it out, returning the created
+ * order. Requires CartModule (and ProductEntity/CartEntity/CartItemEntity/
+ * OrderItemEntity in `entities`) in the suite under test.
+ */
+export async function createOrderViaCart(
+  app: INestApplication<App>,
+  token: string,
+  productId: string,
+  quantity = 1,
+): Promise<OrderResponseDTO> {
+  await request(app.getHttpServer())
+    .post('/cart/items')
+    .set('Authorization', `Bearer ${token}`)
+    .send({ productId, quantity })
+    .expect(200);
+  const response = await request(app.getHttpServer())
+    .post('/cart/checkout')
+    .set('Authorization', `Bearer ${token}`)
+    .expect(201);
+  return response.body as OrderResponseDTO;
 }
 
 /** Pulls the raw refresh-token value out of a response's Set-Cookie header. */

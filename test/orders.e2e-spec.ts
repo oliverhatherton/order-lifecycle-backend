@@ -3,19 +3,29 @@ import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { OrdersService } from '@/modules/orders/services/orders.service';
+import { ProductsModule } from '@/modules/products/products.module';
+import { CartModule } from '@/modules/cart/cart.module';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
+import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
+import { ProductEntity } from '@/entities/product/ProductEntity';
+import { CartEntity } from '@/entities/cart/CartEntity';
+import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   InventoryReservedEvent,
   ORDER_EXCHANGE,
-  OrderCreatedEvent,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
-import { registerAndLogin, setupE2eTest } from '@test/support/e2e';
+import {
+  createOrderViaCart,
+  createProduct,
+  registerAndLogin,
+  setupE2eTest,
+} from '@test/support/e2e';
 
 describe('OrdersController (e2e)', () => {
   const ctx = setupE2eTest({
@@ -23,79 +33,30 @@ describe('OrdersController (e2e)', () => {
       UserEntity,
       RefreshTokenEntity,
       OrderEntity,
+      OrderItemEntity,
+      ProductEntity,
+      CartEntity,
+      CartItemEntity,
       ProcessedMessageEntity,
     ],
-    imports: [AuthModule, OrdersModule],
-    truncate: ['processed_messages', 'orders', 'refresh_tokens', 'users'],
+    imports: [AuthModule, OrdersModule, ProductsModule, CartModule],
+    truncate: [
+      'processed_messages',
+      'order_items',
+      'orders',
+      'cart_items',
+      'carts',
+      'products',
+      'refresh_tokens',
+      'users',
+    ],
     rabbitmq: true,
-  });
-
-  describe('POST /orders', () => {
-    it('creates a PENDING order owned by the authenticated caller', async () => {
-      const token = await registerAndLogin(ctx.app);
-
-      const response = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-
-      const body = response.body as OrderResponseDTO;
-      expect(body.id).toBeDefined();
-      expect(body.status).toBe(OrderStatus.PENDING);
-      expect(body.userId).toBeDefined();
-      expect(body.createdAt).toBeDefined();
-    });
-
-    it('rejects an anonymous request with 401', async () => {
-      await request(ctx.app.getHttpServer()).post('/orders').expect(401);
-    });
-
-    it('publishes a typed OrderCreated event to the exchange', async () => {
-      const amqp = ctx.app.get(AmqpConnection);
-
-      // Bind a throwaway queue to the order-created routing key and capture the
-      // first message that lands.
-      const { queue } = await amqp.channel.assertQueue('', {
-        exclusive: true,
-        autoDelete: true,
-      });
-      await amqp.channel.bindQueue(
-        queue,
-        ORDER_EXCHANGE,
-        OrderRoutingKey.Created,
-      );
-      const received = new Promise<OrderCreatedEvent>((resolve) => {
-        void amqp.channel.consume(
-          queue,
-          (msg) => {
-            if (msg) {
-              resolve(JSON.parse(msg.content.toString()) as OrderCreatedEvent);
-            }
-          },
-          { noAck: true },
-        );
-      });
-
-      const token = await registerAndLogin(ctx.app);
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-      const { id, userId } = created.body as OrderResponseDTO;
-
-      const event = await received;
-      expect(event.orderId).toBe(id);
-      expect(event.userId).toBe(userId);
-      expect(typeof event.occurredAt).toBe('string');
-    });
   });
 
   describe('GET /orders', () => {
     async function createOrder(token: string): Promise<void> {
-      await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
+      const productId = await createProduct(ctx.dataSource);
+      await createOrderViaCart(ctx.app, token, productId);
     }
 
     it("returns only the caller's own orders, partitioned by user", async () => {
@@ -143,31 +104,35 @@ describe('OrdersController (e2e)', () => {
   });
 
   describe('GET /orders/:id', () => {
-    it('returns an order the caller owns', async () => {
+    it('returns an order the caller owns, with its line items', async () => {
       const token = await registerAndLogin(ctx.app);
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource, {
+        name: 'Widget',
+      });
+      const { id } = await createOrderViaCart(ctx.app, token, productId, 3);
 
       const response = await request(ctx.app.getHttpServer())
         .get(`/orders/${id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
 
-      expect((response.body as OrderResponseDTO).id).toBe(id);
+      const body = response.body as OrderResponseDTO;
+      expect(body.id).toBe(id);
+      expect(body.items).toEqual([
+        expect.objectContaining({
+          productId,
+          productName: 'Widget',
+          quantity: 3,
+        }),
+      ]);
     });
 
     it("returns 404 for another user's order (existence hidden)", async () => {
       const ownerToken = await registerAndLogin(ctx.app, {
         email: 'owner@example.com',
       });
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${ownerToken}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, ownerToken, productId);
 
       const otherToken = await registerAndLogin(ctx.app, {
         email: 'other@example.com',
@@ -206,11 +171,8 @@ describe('OrdersController (e2e)', () => {
   describe('POST /orders/:id/pay', () => {
     it('confirms payment on a RESERVED order and publishes the payment-confirmed event', async () => {
       const token = await registerAndLogin(ctx.app);
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, token, productId);
       await ctx.app
         .get(OrdersService)
         .transitionOrder(id, OrderStatus.RESERVED);
@@ -252,11 +214,8 @@ describe('OrdersController (e2e)', () => {
 
     it('rejects a pay on a PENDING order (not yet RESERVED) with 409', async () => {
       const token = await registerAndLogin(ctx.app);
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, token, productId);
 
       await request(ctx.app.getHttpServer())
         .post(`/orders/${id}/pay`)
@@ -266,11 +225,8 @@ describe('OrdersController (e2e)', () => {
 
     it('rejects a second pay on the same order with 409 (double-click guard)', async () => {
       const token = await registerAndLogin(ctx.app);
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, token, productId);
       await ctx.app
         .get(OrdersService)
         .transitionOrder(id, OrderStatus.RESERVED);
@@ -289,11 +245,8 @@ describe('OrdersController (e2e)', () => {
       const ownerToken = await registerAndLogin(ctx.app, {
         email: 'pay-owner@example.com',
       });
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${ownerToken}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, ownerToken, productId);
 
       const otherToken = await registerAndLogin(ctx.app, {
         email: 'pay-other@example.com',
@@ -311,14 +264,92 @@ describe('OrdersController (e2e)', () => {
     });
   });
 
+  describe('POST /orders/:id/cancel', () => {
+    it('cancels a PENDING order', async () => {
+      const token = await registerAndLogin(ctx.app);
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, token, productId);
+
+      const response = await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect((response.body as OrderResponseDTO).status).toBe(
+        OrderStatus.CANCELLED,
+      );
+    });
+
+    it('cancels a RESERVED order (before payment) and restores its stock', async () => {
+      const token = await registerAndLogin(ctx.app);
+      const productId = await createProduct(ctx.dataSource, { stock: 10 });
+      const { id } = await createOrderViaCart(ctx.app, token, productId, 4);
+      await ctx.app
+        .get(OrdersService)
+        .transitionOrder(id, OrderStatus.RESERVED);
+      // Simulate the reservation's decrement, same as InventoryConsumer would.
+      await ctx.dataSource.query(
+        `UPDATE "products" SET stock = stock - 4 WHERE id = $1`,
+        [productId],
+      );
+
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const product = await ctx.dataSource
+        .getRepository(ProductEntity)
+        .findOneByOrFail({ id: productId });
+      expect(product.stock).toBe(10);
+    });
+
+    it('rejects cancelling once payment has been initiated', async () => {
+      const token = await registerAndLogin(ctx.app);
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, token, productId);
+      await ctx.app
+        .get(OrdersService)
+        .transitionOrder(id, OrderStatus.RESERVED);
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/pay`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+    });
+
+    it("returns 404 for another user's order", async () => {
+      const ownerToken = await registerAndLogin(ctx.app, {
+        email: 'cancel-owner@example.com',
+      });
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, ownerToken, productId);
+
+      const otherToken = await registerAndLogin(ctx.app, {
+        email: 'cancel-other@example.com',
+      });
+      await request(ctx.app.getHttpServer())
+        .post(`/orders/${id}/cancel`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(404);
+    });
+
+    it('rejects an anonymous request with 401', async () => {
+      await request(ctx.app.getHttpServer())
+        .post('/orders/00000000-0000-0000-0000-000000000000/cancel')
+        .expect(401);
+    });
+  });
+
   describe('order state machine (no arbitrary status mutation)', () => {
     it('exposes no HTTP route to set an order status directly', async () => {
       const token = await registerAndLogin(ctx.app);
-      const created = await request(ctx.app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${token}`)
-        .expect(201);
-      const { id } = created.body as OrderResponseDTO;
+      const productId = await createProduct(ctx.dataSource);
+      const { id } = await createOrderViaCart(ctx.app, token, productId);
 
       // There is deliberately no status-mutation endpoint; these routes do not
       // exist, so the FSM cannot be bypassed over HTTP.

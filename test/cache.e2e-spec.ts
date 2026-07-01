@@ -2,20 +2,42 @@ import request from 'supertest';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { OrdersService } from '@/modules/orders/services/orders.service';
+import { ProductsModule } from '@/modules/products/products.module';
+import { CartModule } from '@/modules/cart/cart.module';
 import { CacheService } from '@/modules/cache/cache.service';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
+import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
+import { ProductEntity } from '@/entities/product/ProductEntity';
+import { CartEntity } from '@/entities/cart/CartEntity';
+import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
-import { registerAndLogin, setupE2eTest } from '@test/support/e2e';
+import {
+  createOrderViaCart,
+  createProduct,
+  registerAndLogin,
+  setupE2eTest,
+} from '@test/support/e2e';
 
 /**
  * Proves the Epic 4 caching behaviour against a real Redis container: reads
- * (single + list) are served from cache, writes invalidate them, the by-id
- * cache never leaks an order across users (4.1/4.2), and the hit-rate counters
- * plus a cold-vs-warm benchmark make the speed-up observable (4.3).
+ * (single + list) are served from cache once terminal, writes invalidate
+ * them, the by-id cache never leaks an order across users (4.1/4.2), and the
+ * hit-rate counters plus a cold-vs-warm benchmark make the speed-up
+ * observable (4.3).
+ *
+ * Non-terminal (still in-flight) orders are deliberately **never** cached —
+ * see OrdersService.getOrderForUser/listOrdersForUser. Caching an order that
+ * can still transition risks a stale-write-after-invalidate race: a read
+ * started just before a transition can finish (and write its now-stale
+ * snapshot into the cache) just after that transition's invalidating `del`
+ * has already run, leaving a stale entry with nothing left to evict it until
+ * the TTL. That showed up as a completed order still reading back as PAID
+ * under concurrent load. Several tests below assert the *absence* of caching
+ * for non-terminal orders for exactly this reason.
  */
 describe('Order caching (e2e)', () => {
   const ctx = setupE2eTest({
@@ -23,20 +45,31 @@ describe('Order caching (e2e)', () => {
       UserEntity,
       RefreshTokenEntity,
       OrderEntity,
+      OrderItemEntity,
+      ProductEntity,
+      CartEntity,
+      CartItemEntity,
       ProcessedMessageEntity,
     ],
-    imports: [AuthModule, OrdersModule],
-    truncate: ['processed_messages', 'orders', 'refresh_tokens', 'users'],
+    imports: [AuthModule, OrdersModule, ProductsModule, CartModule],
+    truncate: [
+      'processed_messages',
+      'order_items',
+      'orders',
+      'cart_items',
+      'carts',
+      'products',
+      'refresh_tokens',
+      'users',
+    ],
     rabbitmq: true,
     redis: true,
   });
 
   async function createOrder(token: string): Promise<string> {
-    const response = await request(ctx.app.getHttpServer())
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .expect(201);
-    return (response.body as OrderResponseDTO).id;
+    const productId = await createProduct(ctx.dataSource);
+    const order = await createOrderViaCart(ctx.app, token, productId);
+    return order.id;
   }
 
   function getOrder(token: string, id: string) {
@@ -51,11 +84,19 @@ describe('Order caching (e2e)', () => {
       .set('Authorization', `Bearer ${token}`);
   }
 
-  it('serves a repeated read from cache, staying stable until invalidated', async () => {
+  /** Drives a fresh PENDING order all the way to COMPLETED via the service. */
+  async function completeOrder(id: string): Promise<void> {
+    const orders = ctx.app.get(OrdersService);
+    await orders.transitionOrder(id, OrderStatus.RESERVED);
+    await orders.transitionOrder(id, OrderStatus.PAID);
+    await orders.transitionOrder(id, OrderStatus.COMPLETED);
+  }
+
+  it('never caches a non-terminal order, so every read reflects the current DB state', async () => {
     const token = await registerAndLogin(ctx.app);
     const id = await createOrder(token);
 
-    // First read populates the cache.
+    // If this were cached, this read would populate it with PENDING.
     const first = await getOrder(token, id).expect(200);
     expect((first.body as OrderResponseDTO).status).toBe(OrderStatus.PENDING);
 
@@ -65,30 +106,65 @@ describe('Order caching (e2e)', () => {
       [id],
     );
 
+    // A cached read would still show PENDING; an uncached one reflects the change.
+    const second = await getOrder(token, id).expect(200);
+    expect((second.body as OrderResponseDTO).status).toBe(OrderStatus.RESERVED);
+  });
+
+  it('serves a terminal order from cache, staying stable until invalidated', async () => {
+    const token = await registerAndLogin(ctx.app);
+    const id = await createOrder(token);
+    await completeOrder(id);
+
+    // First read of the now-COMPLETED order populates the cache.
+    const first = await getOrder(token, id).expect(200);
+    expect((first.body as OrderResponseDTO).status).toBe(OrderStatus.COMPLETED);
+
+    // Mutate the row directly, bypassing the service (so no invalidation fires).
+    await ctx.dataSource.query(
+      `UPDATE "orders" SET status = '${OrderStatus.FAILED}' WHERE id = $1`,
+      [id],
+    );
+
     // The read is still served from cache — proving it didn't hit the DB.
     const second = await getOrder(token, id).expect(200);
-    expect((second.body as OrderResponseDTO).status).toBe(OrderStatus.PENDING);
+    expect((second.body as OrderResponseDTO).status).toBe(OrderStatus.COMPLETED);
   });
 
   it('invalidates the cache on a transition so the next read is fresh', async () => {
     const token = await registerAndLogin(ctx.app);
     const id = await createOrder(token);
 
-    // Populate the cache with the PENDING state.
     await getOrder(token, id).expect(200);
 
-    // Transition through the service, which invalidates order:{id}.
     await ctx.app.get(OrdersService).transitionOrder(id, OrderStatus.RESERVED);
 
     const fresh = await getOrder(token, id).expect(200);
     expect((fresh.body as OrderResponseDTO).status).toBe(OrderStatus.RESERVED);
   });
 
-  it('serves the order list from cache, staying stable until invalidated', async () => {
+  it('never caches the list while any order in it is non-terminal, so it stays fresh', async () => {
     const token = await registerAndLogin(ctx.app);
     const id = await createOrder(token);
 
-    // First list read caches orders:user:{userId}.
+    // If this were cached, this read would populate it with the PENDING order.
+    const first = await listOrders(token).expect(200);
+    expect((first.body as OrderResponseDTO[]).length).toBe(1);
+
+    // Delete the row directly, bypassing the service (so no invalidation fires).
+    await ctx.dataSource.query(`DELETE FROM "orders" WHERE id = $1`, [id]);
+
+    // A cached list would still show 1; an uncached one reflects the deletion.
+    const second = await listOrders(token).expect(200);
+    expect((second.body as OrderResponseDTO[]).length).toBe(0);
+  });
+
+  it('serves the order list from cache once every order is terminal, staying stable until invalidated', async () => {
+    const token = await registerAndLogin(ctx.app);
+    const id = await createOrder(token);
+    await completeOrder(id);
+
+    // First list read caches orders:user:{userId} (every order is terminal).
     const first = await listOrders(token).expect(200);
     expect((first.body as OrderResponseDTO[]).length).toBe(1);
 
@@ -104,7 +180,6 @@ describe('Order caching (e2e)', () => {
     const token = await registerAndLogin(ctx.app);
     await createOrder(token);
 
-    // Cache the single-order list.
     const first = await listOrders(token).expect(200);
     expect((first.body as OrderResponseDTO[]).length).toBe(1);
 
@@ -115,13 +190,14 @@ describe('Order caching (e2e)', () => {
     expect((second.body as OrderResponseDTO[]).length).toBe(2);
   });
 
-  it('does not leak a cached order to another user', async () => {
+  it('does not leak a cached terminal order to another user', async () => {
     const ownerToken = await registerAndLogin(ctx.app, {
       email: 'owner@example.com',
     });
     const id = await createOrder(ownerToken);
+    await completeOrder(id);
 
-    // Owner caches the order.
+    // Owner caches the (now terminal) order.
     await getOrder(ownerToken, id).expect(200);
 
     // A different user must still get a 404 — the by-id cache is owner-checked.
@@ -134,9 +210,11 @@ describe('Order caching (e2e)', () => {
   // Story 4.3 — performance & hit-rate proof. Asserts the deterministic facts
   // (hits recorded, invalidation forces a miss) and logs the cold-vs-warm
   // latency so the improvement is visible without a flaky timing assertion.
+  // Uses a terminal order — the only kind that's ever cached.
   it('records a high hit rate and faster warm reads than cold reads', async () => {
     const token = await registerAndLogin(ctx.app);
     const id = await createOrder(token);
+    await completeOrder(id);
     const cache = ctx.app.get(CacheService);
     const key = `order:${id}`;
     const samples = 15;
@@ -180,20 +258,20 @@ describe('Order caching (e2e)', () => {
     expect(after.misses - before.misses).toBe(samples);
   });
 
-  it('an order update is observably followed by a cache miss', async () => {
+  it('a non-terminal order is always a cache miss — nothing to invalidate because nothing was ever cached', async () => {
     const token = await registerAndLogin(ctx.app);
     const id = await createOrder(token);
     const cache = ctx.app.get(CacheService);
 
-    await getOrder(token, id).expect(200); // populate
-    await getOrder(token, id).expect(200); // hit
-
     const beforeMisses = cache.getStats().byClass.order?.misses ?? 0;
+    const beforeHits = cache.getStats().byClass.order?.hits ?? 0;
 
-    // A transition invalidates order:{id}, so the next read must miss.
+    await getOrder(token, id).expect(200);
     await ctx.app.get(OrdersService).transitionOrder(id, OrderStatus.RESERVED);
     await getOrder(token, id).expect(200);
 
-    expect(cache.getStats().byClass.order?.misses ?? 0).toBe(beforeMisses + 1);
+    // Two reads of a never-terminal order, two misses, zero hits.
+    expect(cache.getStats().byClass.order?.misses ?? 0).toBe(beforeMisses + 2);
+    expect(cache.getStats().byClass.order?.hits ?? 0).toBe(beforeHits);
   });
 });

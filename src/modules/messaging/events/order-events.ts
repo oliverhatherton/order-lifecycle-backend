@@ -16,10 +16,17 @@ export const OrderRoutingKey = {
   Failed: 'order.failed',
 } as const;
 
+/** A line item, as carried on OrderCreatedEvent for InventoryConsumer to reserve. */
+export interface OrderCreatedEventLine {
+  productId: string;
+  quantity: number;
+}
+
 /** Published when a new order has been created (and committed) in PENDING. */
 export interface OrderCreatedEvent {
   orderId: string;
   userId: string;
+  items: OrderCreatedEventLine[];
   /** ISO-8601 timestamp of when the order was created. */
   occurredAt: string;
 }

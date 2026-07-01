@@ -1,26 +1,37 @@
-import request from 'supertest';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
+import request from 'supertest';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { InventoryModule } from '@/modules/inventory/inventory.module';
 import { PaymentModule } from '@/modules/payment/payment.module';
 import { CompletionModule } from '@/modules/completion/completion.module';
 import { EmailModule } from '@/modules/email/email.module';
+import { ProductsModule } from '@/modules/products/products.module';
+import { CartModule } from '@/modules/cart/cart.module';
 import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
+import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
+import { ProductEntity } from '@/entities/product/ProductEntity';
+import { CartEntity } from '@/entities/cart/CartEntity';
+import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
-import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   ORDER_EXCHANGE,
   OrderCompletedEvent,
   OrderFailedEvent,
   OrderRoutingKey,
 } from '@/modules/messaging/events/order-events';
-import { registerAndLogin, setupE2eTest, waitFor } from '@test/support/e2e';
+import {
+  createOrderViaCart,
+  createProduct,
+  registerAndLogin,
+  setupE2eTest,
+  waitFor,
+} from '@test/support/e2e';
 
 // Controllable stand-in for the payment gateway (overridden into the app).
 const gatewayMock = { authorize: jest.fn() };
@@ -31,6 +42,10 @@ describe('Order fulfilment chain (e2e)', () => {
       UserEntity,
       RefreshTokenEntity,
       OrderEntity,
+      OrderItemEntity,
+      ProductEntity,
+      CartEntity,
+      CartItemEntity,
       ProcessedMessageEntity,
       PaymentAuthorizationEntity,
     ],
@@ -41,11 +56,17 @@ describe('Order fulfilment chain (e2e)', () => {
       PaymentModule,
       CompletionModule,
       EmailModule,
+      ProductsModule,
+      CartModule,
     ],
     truncate: [
       'payment_authorizations',
       'processed_messages',
+      'order_items',
       'orders',
+      'cart_items',
+      'carts',
+      'products',
       'refresh_tokens',
       'users',
     ],
@@ -94,11 +115,9 @@ describe('Order fulfilment chain (e2e)', () => {
 
   async function createOrder(): Promise<{ id: string; token: string }> {
     const token = await registerAndLogin(ctx.app);
-    const created = await request(ctx.app.getHttpServer())
-      .post('/orders')
-      .set('Authorization', `Bearer ${token}`)
-      .expect(201);
-    return { id: (created.body as OrderResponseDTO).id, token };
+    const productId = await createProduct(ctx.dataSource);
+    const order = await createOrderViaCart(ctx.app, token, productId);
+    return { id: order.id, token };
   }
 
   /** Waits for RESERVED, then confirms payment — the UI's "Pay" click. */

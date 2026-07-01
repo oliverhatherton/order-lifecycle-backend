@@ -11,10 +11,10 @@ describe('OrdersController', () => {
   let controller: OrdersController;
 
   const ordersServiceMock = {
-    createOrder: jest.fn(),
     listOrdersForUser: jest.fn(),
     getOrderForUser: jest.fn(),
     initiatePayment: jest.fn(),
+    cancelOrder: jest.fn(),
   };
 
   const caller: JwtPayload = { sub: 'user-1', role: UserRole.USER };
@@ -35,23 +35,6 @@ describe('OrdersController', () => {
     jest.clearAllMocks();
   });
 
-  it('creates an order for the authenticated caller and returns its metadata', async () => {
-    const order = OrderEntityMother.create({ userId: caller.sub });
-    ordersServiceMock.createOrder.mockResolvedValue(order);
-
-    const result = await controller.create(caller);
-
-    expect(ordersServiceMock.createOrder).toHaveBeenCalledWith(caller.sub);
-    expect(result).toEqual({
-      id: order.id,
-      userId: order.userId,
-      status: OrderStatus.PENDING,
-      paymentInitiatedAt: null,
-      createdAt: order.createdAt,
-      updatedAt: order.updatedAt,
-    });
-  });
-
   it("lists the caller's own orders as response metadata", async () => {
     const order = OrderEntityMother.create({ userId: caller.sub });
     ordersServiceMock.listOrdersForUser.mockResolvedValue([order]);
@@ -67,6 +50,7 @@ describe('OrdersController', () => {
         userId: order.userId,
         status: order.status,
         paymentInitiatedAt: null,
+        items: [],
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
       },
@@ -105,5 +89,22 @@ describe('OrdersController', () => {
     );
     expect(result.id).toBe('order-1');
     expect(result.status).toBe(OrderStatus.RESERVED);
+  });
+
+  it('cancels via the service and returns the CANCELLED order', async () => {
+    const order = OrderEntityMother.create({
+      id: 'order-1',
+      userId: caller.sub,
+      status: OrderStatus.CANCELLED,
+    });
+    ordersServiceMock.cancelOrder.mockResolvedValue(order);
+
+    const result = await controller.cancel('order-1', caller);
+
+    expect(ordersServiceMock.cancelOrder).toHaveBeenCalledWith(
+      'order-1',
+      caller.sub,
+    );
+    expect(result.status).toBe(OrderStatus.CANCELLED);
   });
 });

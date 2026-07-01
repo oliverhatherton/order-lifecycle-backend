@@ -93,7 +93,9 @@ export function startConsumerTimer(consumer: string): () => void {
   };
 }
 
-export function recordTerminalState(state: 'completed' | 'failed'): void {
+export function recordTerminalState(
+  state: 'completed' | 'failed' | 'cancelled',
+): void {
   ordersTerminalTotal.inc({ state });
   sink?.record('orders_terminal', 1, { state });
 }
