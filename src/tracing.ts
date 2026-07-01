@@ -46,9 +46,17 @@ export function createTracingSdk(
 
 let sdk: NodeSDK | undefined;
 
-/** Starts tracing once; a no-op if already started. Called by tracing.bootstrap. */
+/**
+ * Starts tracing once; a no-op if already started. In production with no OTLP
+ * endpoint configured it stays off, so a deploy without a trace backend doesn't
+ * spam stdout with console spans (locally, the console exporter is useful).
+ */
 export function startTracing(): void {
   if (sdk) return;
+  const hasOtlpEndpoint = !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (process.env.NODE_ENV === 'production' && !hasOtlpEndpoint) {
+    return;
+  }
   sdk = createTracingSdk();
   sdk.start();
 }

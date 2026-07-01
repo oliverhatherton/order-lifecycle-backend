@@ -151,72 +151,88 @@ docker compose --profile observability up -d
 | Var | Required | Notes |
 | --- | --- | --- |
 | `DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD` / `DB_NAME` | ✅ | Managed Postgres. |
-| `RABBITMQ_URL` | ✅ | e.g. `amqp://user:pass@host:5672` (or `amqps://...`). |
+| `DB_SSL` | ⬜ | `true` for managed Postgres that requires TLS (Neon, Supabase). Render's internal DB: leave `false`. |
+| `DB_SYNCHRONIZE` | ⬜ | `true` on the **first** production deploy to create the schema (no migrations yet); unset it afterwards. |
+| `RABBITMQ_URL` | ✅ | e.g. `amqps://user:pass@host/vhost` (CloudAMQP). |
 | `REDIS_URL` | ✅ | e.g. `redis://:pass@host:6379` (or `rediss://...`). |
-| `JWT_ACCESS_SECRET` | ✅ | **Long random secret** — do not ship the dev default. |
+| `JWT_ACCESS_SECRET` | ✅ | **Long random secret** — never the dev default. |
 | `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN_DAYS` | ⬜ | Defaults `15m` / `7`. |
 | `CACHE_TTL_SECONDS` | ⬜ | Cache safety-net TTL (default 60). |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` | ⬜ | Unset → spans print to console. |
-| `NODE_ENV=production` | ✅ | Enables `secure` cookies; **disables TypeORM `synchronize`** (see below). |
-| `PORT` | ⬜ | Host provides it; the app reads `PORT` (default 3000). |
+| `CORS_ORIGIN` | ⬜* | Comma-separated UI origins. Unset = CORS off (same-origin only). *Required if the UI is on another origin.* |
+| `COOKIE_SAMESITE` | ⬜* | `none` to send the refresh cookie cross-site (needs HTTPS), else `strict`. *Set `none` for a cross-origin UI.* |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` | ⬜ | Set the endpoint to ship traces; unset in production disables tracing (no console spam). |
+| `NODE_ENV=production` | ✅ | Enables `secure` cookies and the production defaults. |
+| `PORT` | ⬜ | The host provides it; the app binds `0.0.0.0:$PORT` (default 3000). |
 
-**Two things you must change for a cross-origin browser UI** (UI domain ≠ API
-domain). Both are one-liners; they aren't on by default because the app ships
-same-origin-safe:
+**Cross-origin UI (UI domain ≠ API domain)** — no code changes, just two env
+vars: set `CORS_ORIGIN=https://your-ui.example` and `COOKIE_SAMESITE=none`
+(HTTPS required, which production is). Leave both unset / `strict` when the UI
+and API share an origin. The UI must send requests with credentials
+(`fetch(..., { credentials: 'include' })`).
 
-1. **Enable CORS with credentials** in `src/main.ts`:
-   ```ts
-   app.enableCors({ origin: 'https://your-ui.example', credentials: true });
-   ```
-2. **Relax the refresh cookie** so the browser sends it cross-site — in
-   `src/modules/auth/auth.cookie.ts`, use `sameSite: 'none'` with `secure: true`
-   in production (Strict blocks cross-site sends). Keep `Strict` only if UI and
-   API are same-site. Both require **HTTPS** in production.
+**Database schema.** Production auto-sync is off by default and there are **no
+migrations yet**, so set `DB_SYNCHRONIZE=true` for the first deploy to create
+the tables, then unset it (it can auto-alter/drop otherwise). Migrations are the
+production-grade upgrade.
 
-**Database schema — mind `synchronize`.** In production
-(`NODE_ENV=production`) TypeORM auto-sync is **off** (`src/config/database.config.ts`),
-and this repo ships **no migrations** yet, so tables won't be created
-automatically. For a demo you can either (a) temporarily run with
-`synchronize: true` for the first boot to create the schema, or (b) add TypeORM
-migrations (`typeorm migration:generate`) and run them on deploy. Don't leave
-`synchronize: true` on for a real workload.
-
-**Build & run:** `pnpm build` → `node dist/main` (`pnpm start:prod`). Tracing
-auto-starts (console exporter unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set).
+**Build & run.** A multi-stage [`Dockerfile`](Dockerfile) builds the app and
+ships a slim prod image (`node dist/main`); [`.dockerignore`](.dockerignore)
+keeps the context lean. Locally: `docker build -t olb . && docker run -p 3000:3000 --env-file .env olb`.
 
 **Admin user:** run `pnpm admin:create` once (with `ADMIN_EMAIL` /
 `ADMIN_PASSWORD` set) against the deployed DB, or promote a row manually.
 
 ---
 
-## 6. Free hosting options
+## 6. Deploying to Render (free)
 
-This app needs **three backing services** (Postgres, RabbitMQ, Redis) plus the
-Node process. The realistic free path is a free app host + managed free tiers:
+The app needs **three backing services**: Postgres and Redis have free Render
+tiers, but **RabbitMQ does not exist on Render** — use CloudAMQP's free plan for
+that one. The repo ships a [`render.yaml`](render.yaml) Blueprint that wires up
+the web service + Postgres + Key Value (Redis) for you.
 
-**App (Node service)**
-- **Render** — free web service; simplest Docker/Node deploy. Caveat: free
-  instances **sleep after ~15 min idle** (cold starts) — fine for a portfolio.
-- **Fly.io** — generous free allowance, runs your Docker image close to the DB;
-  a bit more config (`fly.toml`).
-- **Koyeb** — one free instance, Git-push deploy.
-- **Railway** — smoothest DX and can host Postgres + Redis too, but free usage
-  is trial credit rather than an always-free tier.
+**Prerequisites**
+1. Create a **CloudAMQP** account → new instance → **"Little Lemur" (free)** →
+   copy its `amqps://…` URL.
 
-**Postgres (free tier)** — **Neon** (recommended, generous free, serverless),
-Supabase, or Railway's Postgres.
+**Option A — Blueprint (recommended)**
+1. Push this repo to GitHub.
+2. Render Dashboard → **New → Blueprint** → pick the repo. It reads
+   `render.yaml` and provisions the web service, Postgres and Key Value, wiring
+   `DB_*` and `REDIS_URL` automatically and generating `JWT_ACCESS_SECRET`.
+3. When prompted, fill the `sync:false` vars: **`RABBITMQ_URL`** (the CloudAMQP
+   URL), **`CORS_ORIGIN`** (your UI origin), **`COOKIE_SAMESITE`** (`none` for a
+   cross-origin UI).
+4. Deploy. First boot creates the schema (`DB_SYNCHRONIZE=true`). Once it's up,
+   set `DB_SYNCHRONIZE=false` and redeploy.
+5. Verify: `GET https://<your-app>.onrender.com/health`, then `/docs`.
 
-**Redis (free tier)** — **Upstash** (recommended; free tier, `rediss://` URL).
+**Option B — manual dashboard**
+1. **New → PostgreSQL** (free) and **New → Key Value** (free); note their
+   connection details.
+2. **New → Web Service** → this repo → **Runtime: Docker** →
+   **Health Check Path: `/health`**.
+3. Add env vars: `NODE_ENV=production`, `DB_SYNCHRONIZE=true` (first deploy),
+   `DB_SSL=false`, the five `DB_*` from the Postgres, `REDIS_URL` from Key Value,
+   `RABBITMQ_URL` (CloudAMQP), a strong `JWT_ACCESS_SECRET`, and — for a
+   cross-origin UI — `CORS_ORIGIN` + `COOKIE_SAMESITE=none`.
 
-**RabbitMQ (free tier)** — **CloudAMQP "Little Lemur"** (free shared plan;
-gives you an `amqps://` URL for `RABBITMQ_URL`).
+> **Free-tier caveats:** Render's free web service **sleeps after ~15 min idle**
+> (cold start on the next request — but the app also needs RabbitMQ/Redis
+> reachable at boot, so cold starts take a few seconds). Render's **free
+> Postgres expires after ~30 days** — fine for a demo, but expect to recreate
+> it. Because the service sleeps, the async fulfilment chain still runs while
+> awake; a request that arrives during cold start just waits for boot.
 
-**A pragmatic combo for a portfolio demo:** Render (app) + Neon (Postgres) +
-Upstash (Redis) + CloudAMQP (RabbitMQ). Set the four connection URLs/vars, a
-strong `JWT_ACCESS_SECRET`, `NODE_ENV=production`, enable CORS + `SameSite=None`
-for your UI origin, and create the schema on first boot. Expect a cold-start
-delay on the first request after idle on free app tiers.
+### Other free hosts
 
-> If juggling three managed services is too much for a demo, **Railway** can run
-> the app + Postgres + Redis together and you'd only need CloudAMQP externally —
-> fewer dashboards, at the cost of trial-credit limits.
+- **Fly.io** — runs the same Docker image; more control, a bit more config
+  (`fly.toml`). Pair with Fly Postgres + Upstash Redis + CloudAMQP.
+- **Koyeb** — one free instance, Docker or Git deploy.
+- **Railway** — smoothest DX and can host the app + Postgres + Redis together
+  (only CloudAMQP is external), but its free usage is trial credit, not an
+  always-free tier.
+
+**Managed free backing services** (mix and match): Postgres → **Neon** (set
+`DB_SSL=true`) or Supabase; Redis → **Upstash** (`rediss://` URL); RabbitMQ →
+**CloudAMQP** (the only realistic free option; `amqps://`).

@@ -1,0 +1,74 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploys the API (Docker) + a free Postgres + a free Key Value (Redis) instance.
+#
+# RabbitMQ is NOT offered by Render — provision CloudAMQP's free "Little Lemur"
+# plan and paste its amqps:// URL into RABBITMQ_URL in the dashboard. The app
+# needs all three services reachable at boot. See INTEGRATION.md for the full
+# walkthrough. (Field names track Render's current spec; if your account still
+# shows "Redis", use `type: redis` instead of `keyvalue`.)
+services:
+  - type: web
+    name: order-lifecycle-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # First deploy creates the schema (no migrations yet). Flip to false once
+      # the tables exist so it can't auto-alter them later.
+      - key: DB_SYNCHRONIZE
+        value: 'true'
+      - key: DB_SSL
+        value: 'false' # Render's internal DB connection doesn't need TLS
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN_DAYS
+        value: '7'
+      - key: CACHE_TTL_SECONDS
+        value: '60'
+      - key: DB_HOST
+        fromDatabase:
+          name: olb-postgres
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: olb-postgres
+          property: port
+      - key: DB_USERNAME
+        fromDatabase:
+          name: olb-postgres
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: olb-postgres
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: olb-postgres
+          property: database
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: olb-redis
+          property: connectionString
+      # Set these in the dashboard (marked sync:false so the blueprint won't
+      # overwrite them):
+      - key: RABBITMQ_URL # amqps://... from CloudAMQP
+        sync: false
+      - key: CORS_ORIGIN # your UI origin, e.g. https://my-portfolio.example
+        sync: false
+      - key: COOKIE_SAMESITE # 'none' for a cross-origin UI, else 'strict'
+        sync: false
+
+  - type: keyvalue
+    name: olb-redis
+    plan: free
+    ipAllowList: [] # internal connections only
+
+databases:
+  - name: olb-postgres
+    plan: free

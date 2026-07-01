@@ -18,6 +18,16 @@ async function bootstrap() {
   app.useGlobalInterceptors(new LoggingInterceptor());
   app.useGlobalPipes(buildValidationPipe());
 
+  // Enable CORS only when an origin is configured (a browser UI on another
+  // origin). `credentials: true` lets the refresh cookie flow cross-site.
+  const corsOrigin = process.env.CORS_ORIGIN;
+  if (corsOrigin) {
+    app.enableCors({
+      origin: corsOrigin.split(',').map((origin) => origin.trim()),
+      credentials: true,
+    });
+  }
+
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Order Lifecycle API')
     .setDescription(
@@ -36,7 +46,8 @@ async function bootstrap() {
   SwaggerModule.setup('docs', app, document);
 
   const port = process.env.PORT ?? 3000;
-  await app.listen(port);
+  // Bind 0.0.0.0 so the container is reachable by the host/proxy (e.g. Render).
+  await app.listen(port, '0.0.0.0');
   Logger.log(`Application listening on port ${port}`, 'Bootstrap');
   Logger.log(`API docs at http://localhost:${port}/docs`, 'Bootstrap');
 }
