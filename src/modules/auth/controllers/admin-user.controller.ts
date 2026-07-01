@@ -12,6 +12,7 @@ import {
   ApiBearerAuth,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -40,6 +41,10 @@ export class AdminUserController {
 
   @Get()
   @ApiOperation({ summary: 'List all users (metadata only)' })
+  @ApiOkResponse({
+    type: [UserResponseDTO],
+    description: 'All users, passwords never included.',
+  })
   async list(): Promise<UserResponseDTO[]> {
     const users = await this.userService.listUsers();
     return users.map(toUserResponseDTO);
@@ -48,6 +53,7 @@ export class AdminUserController {
   @Patch(':id/disable')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Disable a user (blocks login and refresh)' })
+  @ApiOkResponse({ type: UserResponseDTO, description: 'The disabled user.' })
   @ApiNotFoundResponse({ description: 'No such user' })
   async disable(
     @Param('id', ParseUUIDPipe) id: string,
@@ -58,6 +64,7 @@ export class AdminUserController {
   @Patch(':id/enable')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Re-enable a previously disabled user' })
+  @ApiOkResponse({ type: UserResponseDTO, description: 'The re-enabled user.' })
   @ApiNotFoundResponse({ description: 'No such user' })
   async enable(
     @Param('id', ParseUUIDPipe) id: string,

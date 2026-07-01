@@ -9,8 +9,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiCreatedResponse,
   ApiNotFoundResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -35,7 +38,17 @@ export class OrdersController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new PENDING order for the caller' })
+  @ApiOperation({
+    summary: 'Create a new PENDING order for the caller',
+    description:
+      'Takes no body. Returns immediately with status PENDING; fulfilment ' +
+      '(reserve → pay → complete) then runs asynchronously, so poll GET ' +
+      '/orders/{id} to observe the status advance.',
+  })
+  @ApiCreatedResponse({
+    type: OrderResponseDTO,
+    description: 'The created order, in PENDING state.',
+  })
   async create(@CurrentUser() user: JwtPayload): Promise<OrderResponseDTO> {
     const order = await this.ordersService.createOrder(user.sub);
     return toOrderResponseDTO(order);
@@ -43,6 +56,10 @@ export class OrdersController {
 
   @Get()
   @ApiOperation({ summary: "List the caller's own orders (newest first)" })
+  @ApiOkResponse({
+    type: [OrderResponseDTO],
+    description: "The caller's orders, most recent first.",
+  })
   async list(@CurrentUser() user: JwtPayload): Promise<OrderResponseDTO[]> {
     const orders = await this.ordersService.listOrdersForUser(user.sub);
     return orders.map(toOrderResponseDTO);
@@ -50,6 +67,11 @@ export class OrdersController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Fetch one of the caller’s orders by id' })
+  @ApiOkResponse({
+    type: OrderResponseDTO,
+    description: 'The requested order.',
+  })
+  @ApiBadRequestResponse({ description: 'Malformed order id (not a UUID)' })
   @ApiNotFoundResponse({ description: 'No such order owned by the caller' })
   async getById(
     @Param('id', ParseUUIDPipe) id: string,

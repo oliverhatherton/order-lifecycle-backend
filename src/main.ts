@@ -33,7 +33,16 @@ async function bootstrap() {
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Order Lifecycle API')
     .setDescription(
-      'Identity & access, the order lifecycle (FSM), and event-driven fulfilment.',
+      [
+        'Identity & access, the order lifecycle (FSM), and event-driven fulfilment.',
+        '',
+        '**Auth:** send the access token as `Authorization: Bearer <jwt>`; the',
+        'refresh token is an httpOnly cookie rotated at `POST /auth/refresh`.',
+        '',
+        '**Orders:** `POST /orders` returns a PENDING order immediately; fulfilment',
+        '(reserve → pay → complete) runs asynchronously, so poll `GET /orders/{id}`',
+        'to watch the status advance to COMPLETED (or FAILED).',
+      ].join('\n'),
     )
     .setVersion('1.0')
     // Access token sent as `Authorization: Bearer <jwt>`.
@@ -43,6 +52,10 @@ async function bootstrap() {
     )
     // Refresh token delivered as an httpOnly cookie.
     .addCookieAuth('refresh_token')
+    .addTag('auth', 'Registration, login, token refresh and identity')
+    .addTag('orders', 'Create and read the caller’s orders')
+    .addTag('admin', 'Admin-only user management (requires ADMIN role)')
+    .addTag('health', 'Liveness probe')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
