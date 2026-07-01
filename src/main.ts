@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import { AppModule } from '@/app.module';
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
 import { CorrelationLogger } from '@/common/correlation/correlation.logger';
+import { buildCorsOrigins } from '@/common/cors/cors-origin';
 import { buildValidationPipe } from '@/common/validation/validation-pipe';
 
 async function bootstrap() {
@@ -20,10 +21,11 @@ async function bootstrap() {
 
   // Enable CORS only when an origin is configured (a browser UI on another
   // origin). `credentials: true` lets the refresh cookie flow cross-site.
+  // Supports exact origins and `*.` subdomain wildcards (see buildCorsOrigins).
   const corsOrigin = process.env.CORS_ORIGIN;
   if (corsOrigin) {
     app.enableCors({
-      origin: corsOrigin.split(',').map((origin) => origin.trim()),
+      origin: buildCorsOrigins(corsOrigin),
       credentials: true,
     });
   }

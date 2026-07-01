@@ -157,16 +157,21 @@ docker compose --profile observability up -d
 | `JWT_ACCESS_SECRET` | ✅ | **Long random secret** — never the dev default. |
 | `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN_DAYS` | ⬜ | Defaults `15m` / `7`. |
 | `CACHE_TTL_SECONDS` | ⬜ | Cache safety-net TTL (default 60). |
-| `CORS_ORIGIN` | ⬜* | Comma-separated UI origins. Unset = CORS off (same-origin only). *Required if the UI is on another origin.* |
+| `CORS_ORIGIN` | ⬜* | Comma-separated UI origins; exact (`https://demo.oliverhatherton.com`) or a `*.` subdomain wildcard (`https://*.oliverhatherton.com`). Unset = CORS off (same-origin only). *Required if the UI is on another origin.* |
 | `COOKIE_SAMESITE` | ⬜* | `none` to send the refresh cookie cross-site (needs HTTPS), else `strict`. *Set `none` for a cross-origin UI.* |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` | ⬜ | Set the endpoint to ship traces; unset in production disables tracing (no console spam). |
 | `NODE_ENV=production` | ✅ | Enables `secure` cookies and the production defaults. |
 | `PORT` | ⬜ | The host provides it; the app binds `0.0.0.0:$PORT` (default 3000). |
 
 **Cross-origin UI (UI domain ≠ API domain)** — no code changes, just two env
-vars: set `CORS_ORIGIN=https://your-ui.example` and `COOKIE_SAMESITE=none`
-(HTTPS required, which production is). Leave both unset / `strict` when the UI
-and API share an origin. The UI must send requests with credentials
+vars: set `CORS_ORIGIN` and `COOKIE_SAMESITE=none` (HTTPS required, which
+production is). `CORS_ORIGIN` takes exact origins
+(`https://order-lifecycle-demo.oliverhatherton.com`) and/or a `*.` subdomain
+wildcard (`https://*.oliverhatherton.com`) — the wildcard matches any subdomain
+but not the apex, and is anchored so it can't match a look-alike
+(`eviloliverhatherton.com`) or suffix trick (`…oliverhatherton.com.evil.com`).
+Prefer an exact origin for a single known subdomain. Leave both unset / `strict`
+when the UI and API share an origin. The UI must send requests with credentials
 (`fetch(..., { credentials: 'include' })`).
 
 **Database schema — TypeORM migrations.** Dev auto-syncs from the entities;
