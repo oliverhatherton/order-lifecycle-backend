@@ -1,10 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { CookieOptions } from 'express';
-import {
-  DAY_IN_MS,
-  REFRESH_TOKEN_COOKIE_PATH,
-  REFRESH_TOKEN_TTL_DEFAULT_DAYS,
-} from '@/modules/auth/auth.constants';
+import { DAY_IN_MS, REFRESH_TOKEN_COOKIE_PATH, REFRESH_TOKEN_TTL_DEFAULT_DAYS, } from '@/modules/auth/auth.constants';
 
 /**
  * Builds the attributes for the refresh-token cookie. `httpOnly` keeps it out
@@ -30,9 +26,11 @@ export function buildRefreshTokenCookieOptions(
     | 'lax'
     | 'none';
 
+  const isProduction = process.env.NODE_ENV === 'production';
+
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProduction || sameSite === 'none',
     sameSite,
     path: REFRESH_TOKEN_COOKIE_PATH,
     maxAge: days * DAY_IN_MS,
