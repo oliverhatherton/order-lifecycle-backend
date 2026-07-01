@@ -12,6 +12,7 @@ import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity'
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   consumerMessagesTotal,
@@ -54,6 +55,7 @@ describe('Consumer & DB metrics (e2e)', () => {
       RefreshTokenEntity,
       OrderEntity,
       ProcessedMessageEntity,
+      PaymentAuthorizationEntity,
     ],
     imports: [
       AuthModule,
@@ -63,7 +65,13 @@ describe('Consumer & DB metrics (e2e)', () => {
       CompletionModule,
       EmailModule,
     ],
-    truncate: ['processed_messages', 'orders', 'refresh_tokens', 'users'],
+    truncate: [
+      'payment_authorizations',
+      'processed_messages',
+      'orders',
+      'refresh_tokens',
+      'users',
+    ],
     rabbitmq: true,
     overrides: [{ provide: PaymentGateway, useValue: gatewayMock }],
   });

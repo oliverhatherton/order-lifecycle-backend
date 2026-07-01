@@ -5,6 +5,7 @@ import { PaymentConsumer } from '@/modules/payment/payment.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { fakeCls } from '@/modules/messaging/testing/fake-cls';
+import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import {
@@ -52,7 +53,7 @@ describe('PaymentConsumer', () => {
       inboxMock as unknown as InboxService,
       ordersMock as unknown as OrdersService,
       publisherMock as unknown as EventPublisher,
-      gatewayMock,
+      gatewayMock as unknown as PaymentGateway,
       fakeCls(),
     );
   });
