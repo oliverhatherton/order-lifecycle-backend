@@ -193,6 +193,7 @@ jobs:
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench/throughput
           name: Load test — throughput
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           fail-on-alert: false
           comment-on-alert: true
@@ -207,6 +208,7 @@ jobs:
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench/latency
           name: Load test — latency
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           fail-on-alert: false
           comment-on-alert: true
