@@ -1,0 +1,11 @@
+# Not a monorepo — this file exists solely because pnpm 10+ moved
+# project-level settings (like onlyBuiltDependencies) here from
+# package.json's "pnpm" field, which is no longer read.
+onlyBuiltDependencies:
+  - '@scarf/scarf'
+  - bcrypt
+  - better-sqlite3
+  - cpu-features
+  - protobufjs
+  - ssh2
+  - unrs-resolver
