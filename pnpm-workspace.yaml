@@ -1,11 +1,18 @@
 # Not a monorepo — this file exists solely because pnpm 10+ moved
-# project-level settings (like onlyBuiltDependencies) here from
-# package.json's "pnpm" field, which is no longer read.
-onlyBuiltDependencies:
-  - '@scarf/scarf'
-  - bcrypt
-  - better-sqlite3
-  - cpu-features
-  - protobufjs
-  - ssh2
-  - unrs-resolver
+# project-level settings out of package.json's "pnpm" field (no longer read).
+#
+# pnpm 11 removed the `onlyBuiltDependencies` list and replaced it with the
+# `allowBuilds` map (https://pnpm.io/settings). The old key still limps along
+# on a warm cache locally, but pnpm 11's cold-cache supply-chain verification
+# pass (minimumReleaseAge, on by default) only consults `allowBuilds` — so in
+# CI none of these native deps were approved and pnpm hard-errored with
+# ERR_PNPM_IGNORED_BUILDS. Listing them here (name: true) runs their install/
+# postinstall build scripts.
+allowBuilds:
+  '@scarf/scarf': true
+  bcrypt: true
+  better-sqlite3: true
+  cpu-features: true
+  protobufjs: true
+  ssh2: true
+  unrs-resolver: true

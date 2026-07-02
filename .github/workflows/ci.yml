@@ -20,29 +20,19 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          # Pinned explicitly rather than relying on packageManager-field
-          # auto-detection — that detection silently produced a different
-          # pnpm build here than locally, which is why the
-          # onlyBuiltDependencies allow-list in pnpm-workspace.yaml wasn't
-          # being honoured (ERR_PNPM_IGNORED_BUILDS on a clean install).
+          # Pin to match the packageManager field so CI and local agree.
           version: 11.5.2
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          # Include pnpm-workspace.yaml in the cache key too — it now
-          # affects install behaviour (onlyBuiltDependencies), not just the
-          # lockfile, so a change to it must invalidate the pnpm store cache.
+          # Include pnpm-workspace.yaml in the cache key too — it carries
+          # install-affecting settings (allowBuilds), not just the lockfile,
+          # so a change to it must invalidate the pnpm store cache.
           cache-dependency-path: |
             pnpm-lock.yaml
             pnpm-workspace.yaml
-
-      - name: Diagnostics
-        run: |
-          pnpm --version
-          echo "--- pnpm-workspace.yaml ---"
-          cat pnpm-workspace.yaml
 
       - run: pnpm install --frozen-lockfile
 
@@ -71,20 +61,16 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          # Pinned explicitly rather than relying on packageManager-field
-          # auto-detection — that detection silently produced a different
-          # pnpm build here than locally, which is why the
-          # onlyBuiltDependencies allow-list in pnpm-workspace.yaml wasn't
-          # being honoured (ERR_PNPM_IGNORED_BUILDS on a clean install).
+          # Pin to match the packageManager field so CI and local agree.
           version: 11.5.2
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          # Include pnpm-workspace.yaml in the cache key too — it now
-          # affects install behaviour (onlyBuiltDependencies), not just the
-          # lockfile, so a change to it must invalidate the pnpm store cache.
+          # Include pnpm-workspace.yaml in the cache key too — it carries
+          # install-affecting settings (allowBuilds), not just the lockfile,
+          # so a change to it must invalidate the pnpm store cache.
           cache-dependency-path: |
             pnpm-lock.yaml
             pnpm-workspace.yaml
@@ -136,20 +122,16 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          # Pinned explicitly rather than relying on packageManager-field
-          # auto-detection — that detection silently produced a different
-          # pnpm build here than locally, which is why the
-          # onlyBuiltDependencies allow-list in pnpm-workspace.yaml wasn't
-          # being honoured (ERR_PNPM_IGNORED_BUILDS on a clean install).
+          # Pin to match the packageManager field so CI and local agree.
           version: 11.5.2
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          # Include pnpm-workspace.yaml in the cache key too — it now
-          # affects install behaviour (onlyBuiltDependencies), not just the
-          # lockfile, so a change to it must invalidate the pnpm store cache.
+          # Include pnpm-workspace.yaml in the cache key too — it carries
+          # install-affecting settings (allowBuilds), not just the lockfile,
+          # so a change to it must invalidate the pnpm store cache.
           cache-dependency-path: |
             pnpm-lock.yaml
             pnpm-workspace.yaml
