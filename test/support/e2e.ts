@@ -4,6 +4,7 @@ import {
   ModuleMetadata,
 } from '@nestjs/common';
 import { ConfigModule, ConfigFactory } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { Test } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { EntityClassOrSchema } from '@nestjs/typeorm/dist/interfaces/entity-class-or-schema.type';
@@ -124,6 +125,11 @@ export async function startTestApp(
       // Correlation-id CLS (middleware + ClsService) — the app wires this in
       // AppModule; feature modules and consumers depend on ClsService.
       correlationClsModule(),
+      // Powers @Interval/@Cron (OutboxRelayService, StockReplenishmentService)
+      // — the app wires this once, globally, in AppModule. Without it those
+      // decorators are inert: no error, but the interval simply never fires,
+      // which would silently strand every outbox row in these tests.
+      ScheduleModule.forRoot(),
       ...options.imports,
     ],
   });

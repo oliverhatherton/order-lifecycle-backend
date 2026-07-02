@@ -4,7 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
@@ -29,7 +29,7 @@ export class OrderCompletionConsumer {
   constructor(
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
-    private readonly publisher: EventPublisher,
+    private readonly outbox: OutboxService,
     private readonly cls: ClsService,
   ) {}
 
@@ -65,24 +65,21 @@ export class OrderCompletionConsumer {
           OrderStatus.COMPLETED,
           manager,
         );
+        const completed: OrderCompletedEvent = {
+          orderId: event.orderId,
+          userId: event.userId,
+          occurredAt: new Date().toISOString(),
+        };
+        await this.outbox.enqueue(
+          manager,
+          OrderRoutingKey.Completed,
+          completed,
+        );
       },
     );
     if (outcome instanceof Nack) return outcome;
     if (outcome === 'skipped') return;
 
-    const completed: OrderCompletedEvent = {
-      orderId: event.orderId,
-      userId: event.userId,
-      occurredAt: new Date().toISOString(),
-    };
-    try {
-      await this.publisher.publish(OrderRoutingKey.Completed, completed);
-      this.logger.log(`Order ${event.orderId} completed`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish OrderCompleted for order ${event.orderId}`,
-        error as Error,
-      );
-    }
+    this.logger.log(`Order ${event.orderId} completed`);
   }
 }

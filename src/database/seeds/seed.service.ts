@@ -10,7 +10,11 @@ const DEFAULT_ADMIN_EMAIL = 'admin@example.com';
 const DEFAULT_ADMIN_PASSWORD = 'ChangeMe123!';
 
 /** Starting demo catalog — insert-if-missing by `sku`, see seedProducts. */
-const DEMO_PRODUCTS: ReadonlyArray<{ sku: string; name: string; stock: number }> = [
+const DEMO_PRODUCTS: ReadonlyArray<{
+  sku: string;
+  name: string;
+  stock: number;
+}> = [
   { sku: 'WIDGET-001', name: 'Standard Widget', stock: 75 },
   { sku: 'WIDGET-002', name: 'Deluxe Widget', stock: 60 },
   { sku: 'GADGET-001', name: 'Pocket Gadget', stock: 90 },

@@ -50,7 +50,10 @@ export class ProductsService {
    * InsufficientStockError, so nothing leaks regardless of what the caller
    * does with the transaction afterwards.
    */
-  async reserveStock(lines: StockLine[], manager: EntityManager): Promise<void> {
+  async reserveStock(
+    lines: StockLine[],
+    manager: EntityManager,
+  ): Promise<void> {
     const repository = manager.getRepository(ProductEntity);
     const applied: StockLine[] = [];
     try {
@@ -81,7 +84,10 @@ export class ProductsService {
    * transaction (not required to be atomic-with-anything else the way
    * reserveStock is, since there's no "insufficient" case to roll back on).
    */
-  async restoreStock(lines: StockLine[], manager?: EntityManager): Promise<void> {
+  async restoreStock(
+    lines: StockLine[],
+    manager?: EntityManager,
+  ): Promise<void> {
     const repository = manager
       ? manager.getRepository(ProductEntity)
       : this.repository;

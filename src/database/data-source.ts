@@ -11,6 +11,7 @@ import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { migrations } from '@/database/migrations';
 
 // Standalone DataSource for the TypeORM CLI (migration generate/run/revert).
@@ -38,6 +39,7 @@ const AppDataSource = new DataSource({
     CartEntity,
     CartItemEntity,
     OrderItemEntity,
+    OutboxMessageEntity,
   ],
   migrations,
   synchronize: false,

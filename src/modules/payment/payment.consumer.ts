@@ -4,7 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
 import {
@@ -34,7 +34,7 @@ export class PaymentConsumer {
   constructor(
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
-    private readonly publisher: EventPublisher,
+    private readonly outbox: OutboxService,
     private readonly gateway: PaymentGateway,
     private readonly cls: ClsService,
   ) {}
@@ -80,7 +80,11 @@ export class PaymentConsumer {
       const targetStatus = result.authorized
         ? OrderStatus.PAID
         : OrderStatus.FAILED;
+      const declineReason = result.declineReason ?? 'payment_declined';
 
+      // The transition and its outbox row commit together — a redelivery
+      // that lost the inbox race can't leave a status change without its
+      // announcing event, or vice versa.
       const processed = await this.inbox.runOnce(
         messageId,
         CONSUMER,
@@ -90,6 +94,26 @@ export class PaymentConsumer {
             targetStatus,
             manager,
           );
+          if (result.authorized) {
+            const paid: PaymentProcessedEvent = {
+              orderId: event.orderId,
+              userId: event.userId,
+              occurredAt: new Date().toISOString(),
+            };
+            await this.outbox.enqueue(
+              manager,
+              OrderRoutingKey.PaymentProcessed,
+              paid,
+            );
+          } else {
+            const failed: OrderFailedEvent = {
+              orderId: event.orderId,
+              userId: event.userId,
+              reason: declineReason,
+              occurredAt: new Date().toISOString(),
+            };
+            await this.outbox.enqueue(manager, OrderRoutingKey.Failed, failed);
+          }
         },
       );
       if (!processed) {
@@ -101,54 +125,13 @@ export class PaymentConsumer {
       }
 
       recordConsumerOutcome(CONSUMER, 'processed');
-      if (result.authorized) {
-        await this.publishPaid(event);
-      } else {
-        await this.publishFailed(
-          event,
-          result.declineReason ?? 'payment_declined',
-        );
-      }
+      this.logger.log(
+        result.authorized
+          ? `Payment processed for order ${event.orderId}`
+          : `Payment declined for order ${event.orderId}: ${declineReason}`,
+      );
     } finally {
       stopTimer();
-    }
-  }
-
-  private async publishPaid(event: InventoryReservedEvent): Promise<void> {
-    const paid: PaymentProcessedEvent = {
-      orderId: event.orderId,
-      userId: event.userId,
-      occurredAt: new Date().toISOString(),
-    };
-    try {
-      await this.publisher.publish(OrderRoutingKey.PaymentProcessed, paid);
-      this.logger.log(`Payment processed for order ${event.orderId}`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish PaymentProcessed for order ${event.orderId}`,
-        error as Error,
-      );
-    }
-  }
-
-  private async publishFailed(
-    event: InventoryReservedEvent,
-    reason: string,
-  ): Promise<void> {
-    const failed: OrderFailedEvent = {
-      orderId: event.orderId,
-      userId: event.userId,
-      reason,
-      occurredAt: new Date().toISOString(),
-    };
-    try {
-      await this.publisher.publish(OrderRoutingKey.Failed, failed);
-      this.logger.log(`Payment declined for order ${event.orderId}: ${reason}`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish OrderFailed for order ${event.orderId}`,
-        error as Error,
-      );
     }
   }
 }

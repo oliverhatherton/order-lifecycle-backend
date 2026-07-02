@@ -3,7 +3,7 @@ import { ConsumeMessage } from 'amqplib';
 import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { InventoryConsumer } from '@/modules/inventory/inventory.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
@@ -20,7 +20,7 @@ describe('InventoryConsumer', () => {
   const inboxMock = { runOnce: jest.fn() };
   const ordersMock = { transitionOrder: jest.fn() };
   const productsMock = { reserveStock: jest.fn() };
-  const publisherMock = { publish: jest.fn() };
+  const outboxMock = { enqueue: jest.fn() };
 
   let consumer: InventoryConsumer;
 
@@ -42,7 +42,7 @@ describe('InventoryConsumer', () => {
       inboxMock as unknown as InboxService,
       ordersMock as unknown as OrdersService,
       productsMock as unknown as ProductsService,
-      publisherMock as unknown as EventPublisher,
+      outboxMock as unknown as OutboxService,
       fakeCls(),
     );
   });
@@ -75,10 +75,10 @@ describe('InventoryConsumer', () => {
       OrderStatus.RESERVED,
       manager,
     );
-    expect(publisherMock.publish).not.toHaveBeenCalled();
+    expect(outboxMock.enqueue).not.toHaveBeenCalled();
   });
 
-  it('fails the order and publishes OrderFailed when stock is insufficient', async () => {
+  it('fails the order and enqueues OrderFailed when stock is insufficient', async () => {
     const manager = {} as EntityManager;
     runInboxWork(manager);
     productsMock.reserveStock.mockRejectedValue(
@@ -92,7 +92,8 @@ describe('InventoryConsumer', () => {
       OrderStatus.FAILED,
       manager,
     );
-    expect(publisherMock.publish).toHaveBeenCalledWith(
+    expect(outboxMock.enqueue).toHaveBeenCalledWith(
+      manager,
       OrderRoutingKey.Failed,
       expect.objectContaining({
         orderId: 'order-1',
@@ -107,7 +108,7 @@ describe('InventoryConsumer', () => {
     await consumer.onOrderCreated(event, messageWith('msg-1'));
 
     expect(ordersMock.transitionOrder).not.toHaveBeenCalled();
-    expect(publisherMock.publish).not.toHaveBeenCalled();
+    expect(outboxMock.enqueue).not.toHaveBeenCalled();
   });
 
   it('dead-letters a message with no messageId without processing it', async () => {

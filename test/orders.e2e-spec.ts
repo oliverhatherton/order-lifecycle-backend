@@ -14,6 +14,7 @@ import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   InventoryReservedEvent,
@@ -38,10 +39,12 @@ describe('OrdersController (e2e)', () => {
       CartEntity,
       CartItemEntity,
       ProcessedMessageEntity,
+      OutboxMessageEntity,
     ],
     imports: [AuthModule, OrdersModule, ProductsModule, CartModule],
     truncate: [
       'processed_messages',
+      'outbox_messages',
       'order_items',
       'orders',
       'cart_items',

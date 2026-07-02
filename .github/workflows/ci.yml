@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# Cancel superseded runs on the same branch/PR so pushes don't queue behind
+# stale CI for commits that no longer matter.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, build, unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint:ci
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+  e2e:
+    name: End-to-end tests
+    needs: verify
+    runs-on: ubuntu-latest
+    # Testcontainers spins up its own Postgres/RabbitMQ/Redis containers per
+    # suite (see test/support/e2e.ts) — ubuntu-latest ships Docker already
+    # running, so no services: block is needed here.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+  load-test:
+    name: Load test
+    needs: verify
+    runs-on: ubuntu-latest
+    # Push-only: load numbers are noisy on shared PR runners and aren't a
+    # merge gate, just a recorded data point (see ops/load-test.ts).
+    if: github.event_name == 'push'
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: order_lifecycle
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:4
+        ports: ['5672:5672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Start the app
+        env:
+          NODE_ENV: development
+          PORT: '3000'
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: order_lifecycle
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+          REDIS_URL: redis://localhost:6379
+          JWT_ACCESS_SECRET: ci-load-test-secret
+        run: nohup node dist/main > app.log 2>&1 &
+
+      - name: Run load test
+        env:
+          LOAD_TEST_BASE_URL: http://localhost:3000
+          LOAD_TEST_DURATION_SECONDS: '10'
+          LOAD_TEST_CONNECTIONS: '20'
+        run: pnpm test:load
+
+      - name: App log
+        if: always()
+        run: cat app.log || true

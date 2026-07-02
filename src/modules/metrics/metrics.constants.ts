@@ -13,6 +13,7 @@ export const PERSISTED_METRICS = [
   'db_query_duration_ms',
   'http_request_duration_ms',
   'stock_replenished',
+  'outbox_relayed',
   'event_loop_lag_ms',
   'event_loop_lag_max_ms',
   'memory_heap_used_bytes',

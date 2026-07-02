@@ -7,7 +7,7 @@ import { ProductsModule } from '@/modules/products/products.module';
 /**
  * The inventory "service": consumes OrderCreated, reserves real stock and
  * advances the order to RESERVED (or FAILED if short). MessagingModule
- * supplies the broker + inbox + publisher; OrdersModule supplies the
+ * supplies the broker + inbox + outbox; OrdersModule supplies the
  * transition; ProductsModule supplies stock reservation.
  */
 @Module({

@@ -30,7 +30,10 @@ describe('StockReplenishmentService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StockReplenishmentService,
-        { provide: getRepositoryToken(ProductEntity), useValue: repositoryMock },
+        {
+          provide: getRepositoryToken(ProductEntity),
+          useValue: repositoryMock,
+        },
       ],
     }).compile();
 

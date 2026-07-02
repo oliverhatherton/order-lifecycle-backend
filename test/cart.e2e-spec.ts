@@ -10,9 +10,14 @@ import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { CartResponseDTO } from '@/modules/cart/dto/CartResponseDTO';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
-import { createProduct, registerAndLogin, setupE2eTest } from '@test/support/e2e';
+import {
+  createProduct,
+  registerAndLogin,
+  setupE2eTest,
+} from '@test/support/e2e';
 
 describe('Cart (e2e)', () => {
   const ctx = setupE2eTest({
@@ -24,9 +29,11 @@ describe('Cart (e2e)', () => {
       ProductEntity,
       CartEntity,
       CartItemEntity,
+      OutboxMessageEntity,
     ],
     imports: [AuthModule, OrdersModule, ProductsModule, CartModule],
     truncate: [
+      'outbox_messages',
       'order_items',
       'orders',
       'cart_items',
@@ -106,7 +113,10 @@ describe('Cart (e2e)', () => {
       await request(ctx.app.getHttpServer())
         .post('/cart/items')
         .set('Authorization', `Bearer ${token}`)
-        .send({ productId: '00000000-0000-0000-0000-000000000000', quantity: 1 })
+        .send({
+          productId: '00000000-0000-0000-0000-000000000000',
+          quantity: 1,
+        })
         .expect(404);
     });
 
@@ -161,7 +171,11 @@ describe('Cart (e2e)', () => {
       const order = response.body as OrderResponseDTO;
       expect(order.status).toBe('PENDING');
       expect(order.items).toEqual([
-        expect.objectContaining({ productId, productName: 'Widget', quantity: 2 }),
+        expect.objectContaining({
+          productId,
+          productName: 'Widget',
+          quantity: 2,
+        }),
       ]);
     });
 
@@ -222,7 +236,7 @@ describe('Cart (e2e)', () => {
         .get('/orders')
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      expect((orders.body as OrderResponseDTO[])).toHaveLength(1);
+      expect(orders.body as OrderResponseDTO[]).toHaveLength(1);
     });
 
     it('rejects an anonymous request with 401', async () => {

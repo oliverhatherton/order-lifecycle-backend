@@ -14,7 +14,7 @@ import {
   isTerminalStatus,
   isTransitionAllowed,
 } from '@/modules/orders/order-state-machine';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { CacheService } from '@/modules/cache/cache.service';
 import {
   recordTerminalState,
@@ -58,7 +58,7 @@ export class OrdersService {
     @InjectRepository(OrderEntity)
     private readonly orderRepository: Repository<OrderEntity>,
     @InjectDataSource() private readonly dataSource: DataSource,
-    private readonly eventPublisher: EventPublisher,
+    private readonly outbox: OutboxService,
     private readonly cache: CacheService,
     private readonly products: ProductsService,
     configService: ConfigService,
@@ -68,9 +68,10 @@ export class OrdersService {
 
   /**
    * Creates a new PENDING order owned by the given user from a checked-out
-   * cart's line items, and announces it. The order and its OrderItems are
-   * persisted in one transaction — there's never a moment where the order
-   * exists without its items.
+   * cart's line items, and announces it. The order, its OrderItems, and the
+   * outbox row for OrderCreated are all persisted in one transaction — the
+   * event can never commit without the order or vice versa (see
+   * OutboxService; OutboxRelayService delivers it to the broker afterwards).
    */
   async createOrder(userId: string, lines: OrderLine[]): Promise<OrderEntity> {
     const order = await timeDb('order.create', () =>
@@ -87,31 +88,22 @@ export class OrdersService {
           }),
         );
         created.items = await manager.save(items);
+
+        const event: OrderCreatedEvent = {
+          orderId: created.id,
+          userId: created.userId,
+          items: lines.map((line) => ({
+            productId: line.productId,
+            quantity: line.quantity,
+          })),
+          occurredAt: created.createdAt.toISOString(),
+        };
+        await this.outbox.enqueue(manager, OrderRoutingKey.Created, event);
+
         return created;
       }),
     );
     this.logger.log(`Created order ${order.id} for user ${userId}`);
-
-    // Publish-after-commit: the order is durably saved before we announce it.
-    // If the broker is unavailable we log rather than fail the request (no
-    // outbox yet); the order still exists and can be reconciled.
-    const event: OrderCreatedEvent = {
-      orderId: order.id,
-      userId: order.userId,
-      items: lines.map((line) => ({
-        productId: line.productId,
-        quantity: line.quantity,
-      })),
-      occurredAt: order.createdAt.toISOString(),
-    };
-    try {
-      await this.eventPublisher.publish(OrderRoutingKey.Created, event);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish OrderCreated for order ${order.id}`,
-        error as Error,
-      );
-    }
 
     // The new order changes the owner's list, so drop its cached copy.
     await this.cache.del(userOrdersKey(userId));
@@ -244,14 +236,16 @@ export class OrdersService {
   /**
    * Confirms payment on a RESERVED order the user owns — the "Pay" button in
    * the UI. Inventory reservation no longer auto-advances the order; it sits
-   * in RESERVED until this is called, then publishes the same event
+   * in RESERVED until this is called, then enqueues the same event
    * PaymentConsumer already listens for, resuming the async chain
    * (authorize → PAID/FAILED → COMPLETED).
    *
    * The status/claim check is a single atomic `UPDATE ... WHERE status =
    * RESERVED AND paymentInitiatedAt IS NULL`, so two concurrent calls (e.g. a
-   * double-click) can only ever have one publish the event — the loser sees
-   * `affected === 0` and gets a 409, not a duplicate payment attempt.
+   * double-click) can only ever have one win the claim — the loser sees
+   * `affected === 0` and gets a 409, not a duplicate payment attempt. The
+   * claim and the outbox write commit in the same transaction, so a claim can
+   * never succeed without the event being durably queued for delivery.
    */
   async initiatePayment(orderId: string, userId: string): Promise<OrderEntity> {
     // 404s if the order doesn't exist or isn't the caller's.
@@ -262,43 +256,39 @@ export class OrdersService {
       );
     }
 
-    const claim = await timeDb('order.claimPayment', () =>
-      this.orderRepository
-        .createQueryBuilder()
-        .update(OrderEntity)
-        .set({ paymentInitiatedAt: () => 'now()' })
-        .where('id = :id', { id: orderId })
-        .andWhere('status = :status', { status: OrderStatus.RESERVED })
-        .andWhere('"paymentInitiatedAt" IS NULL')
-        .execute(),
-    );
-    if (claim.affected === 0) {
-      throw new ConflictException(
-        'Payment has already been initiated for this order',
-      );
-    }
-    order.paymentInitiatedAt = new Date();
-
-    // Publish-after-claim, same fail-open policy as createOrder: the claim is
-    // durable even if the broker is briefly unavailable, at the cost of a
-    // stuck order needing reconciliation (no outbox yet).
     const event: InventoryReservedEvent = {
       orderId: order.id,
       userId: order.userId,
       occurredAt: new Date().toISOString(),
     };
-    try {
-      await this.eventPublisher.publish(
-        OrderRoutingKey.InventoryReserved,
-        event,
-      );
-      this.logger.log(`Payment confirmed by caller for order ${order.id}`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish payment-confirmed event for order ${order.id}`,
-        error as Error,
+
+    const claimed = await timeDb('order.claimPayment', () =>
+      this.dataSource.transaction(async (manager) => {
+        const claim = await manager
+          .createQueryBuilder()
+          .update(OrderEntity)
+          .set({ paymentInitiatedAt: () => 'now()' })
+          .where('id = :id', { id: orderId })
+          .andWhere('status = :status', { status: OrderStatus.RESERVED })
+          .andWhere('"paymentInitiatedAt" IS NULL')
+          .execute();
+        if (claim.affected === 0) return false;
+
+        await this.outbox.enqueue(
+          manager,
+          OrderRoutingKey.InventoryReserved,
+          event,
+        );
+        return true;
+      }),
+    );
+    if (!claimed) {
+      throw new ConflictException(
+        'Payment has already been initiated for this order',
       );
     }
+    order.paymentInitiatedAt = new Date();
+    this.logger.log(`Payment confirmed by caller for order ${order.id}`);
 
     await this.cache.del(orderKey(orderId));
     return order;

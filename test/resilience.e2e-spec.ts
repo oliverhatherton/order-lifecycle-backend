@@ -18,6 +18,7 @@ import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
 import { ORDER_DLQ } from '@/modules/messaging/events/order-events';
 import {
@@ -42,6 +43,7 @@ describe('Resilience (e2e)', () => {
       CartItemEntity,
       ProcessedMessageEntity,
       PaymentAuthorizationEntity,
+      OutboxMessageEntity,
     ],
     imports: [
       AuthModule,
@@ -56,6 +58,7 @@ describe('Resilience (e2e)', () => {
     truncate: [
       'payment_authorizations',
       'processed_messages',
+      'outbox_messages',
       'order_items',
       'orders',
       'cart_items',

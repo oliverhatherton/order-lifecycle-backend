@@ -16,6 +16,7 @@ import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
 import {
   ORDER_EXCHANGE,
@@ -46,6 +47,7 @@ describe('Payment fulfilment (e2e)', () => {
       CartItemEntity,
       ProcessedMessageEntity,
       PaymentAuthorizationEntity,
+      OutboxMessageEntity,
     ],
     imports: [
       AuthModule,
@@ -58,6 +60,7 @@ describe('Payment fulfilment (e2e)', () => {
     truncate: [
       'payment_authorizations',
       'processed_messages',
+      'outbox_messages',
       'order_items',
       'orders',
       'cart_items',

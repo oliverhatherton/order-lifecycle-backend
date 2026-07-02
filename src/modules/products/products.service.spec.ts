@@ -42,7 +42,10 @@ describe('ProductsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
-        { provide: getRepositoryToken(ProductEntity), useValue: repositoryMock },
+        {
+          provide: getRepositoryToken(ProductEntity),
+          useValue: repositoryMock,
+        },
       ],
     }).compile();
 
@@ -115,7 +118,10 @@ describe('ProductsService', () => {
       queryBuilderMock.execute.mockResolvedValue({ affected: 1 });
       repositoryMock.createQueryBuilder.mockClear();
 
-      await service.restoreStock([{ productId: 'p1', quantity: 1 }], managerMock);
+      await service.restoreStock(
+        [{ productId: 'p1', quantity: 1 }],
+        managerMock,
+      );
 
       expect(repositoryMock.createQueryBuilder).not.toHaveBeenCalled();
       expect(managerRepositoryMock.createQueryBuilder).toHaveBeenCalled();

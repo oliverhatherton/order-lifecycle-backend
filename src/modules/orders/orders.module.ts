@@ -9,7 +9,7 @@ import { MessagingModule } from '@/modules/messaging/messaging.module';
 import { ProductsModule } from '@/modules/products/products.module';
 
 @Module({
-  // AuthModule supplies JwtAuthGuard; MessagingModule supplies EventPublisher;
+  // AuthModule supplies JwtAuthGuard; MessagingModule supplies OutboxService;
   // ProductsModule supplies stock restore for cancelOrder.
   imports: [
     TypeOrmModule.forFeature([OrderEntity, OrderItemEntity]),

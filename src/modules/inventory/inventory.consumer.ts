@@ -4,7 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import type { ConsumeMessage } from 'amqplib';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
@@ -35,7 +35,7 @@ const CONSUMER = 'inventory';
  *
  * On success, deliberately does **not** publish onward from RESERVED — the
  * order pauses there until the caller confirms payment via
- * `POST /orders/{id}/pay` (OrdersService.initiatePayment), which publishes
+ * `POST /orders/{id}/pay` (OrdersService.initiatePayment), which enqueues
  * the event PaymentConsumer listens for. This turns "reserved" into a real
  * gate the UI's simulated "Pay" button controls, instead of the whole chain
  * firing automatically.
@@ -48,7 +48,7 @@ export class InventoryConsumer {
     private readonly inbox: InboxService,
     private readonly orders: OrdersService,
     private readonly products: ProductsService,
-    private readonly publisher: EventPublisher,
+    private readonly outbox: OutboxService,
     private readonly cls: ClsService,
   ) {}
 
@@ -76,9 +76,10 @@ export class InventoryConsumer {
   ): Promise<Nack | void> {
     let shortProductId: string | undefined;
 
-    // Reserve stock and advance the order exactly once: everything commits
-    // (or the whole message is retried) in one transaction with the inbox
-    // record. An insufficient-stock failure is handled *inside* this
+    // Reserve stock and advance the order exactly once: everything —
+    // including the OrderFailed outbox row on the insufficient-stock path —
+    // commits (or the whole message is retried) in one transaction with the
+    // inbox record. An insufficient-stock failure is handled *inside* this
     // callback — the FAILED transition still needs to commit — rather than
     // by letting the transaction fail outright.
     const outcome = await processEventOnce(
@@ -102,6 +103,13 @@ export class InventoryConsumer {
             OrderStatus.FAILED,
             manager,
           );
+          const failed: OrderFailedEvent = {
+            orderId: event.orderId,
+            userId: event.userId,
+            reason: 'insufficient_stock',
+            occurredAt: new Date().toISOString(),
+          };
+          await this.outbox.enqueue(manager, OrderRoutingKey.Failed, failed);
         }
       },
     );
@@ -112,32 +120,11 @@ export class InventoryConsumer {
       this.logger.log(
         `Order ${event.orderId} failed: insufficient stock for product ${shortProductId}`,
       );
-      await this.publishFailed(event, 'insufficient_stock');
       return;
     }
 
     this.logger.log(
       `Reserved inventory for order ${event.orderId}; awaiting payment confirmation`,
     );
-  }
-
-  private async publishFailed(
-    event: OrderCreatedEvent,
-    reason: string,
-  ): Promise<void> {
-    const failed: OrderFailedEvent = {
-      orderId: event.orderId,
-      userId: event.userId,
-      reason,
-      occurredAt: new Date().toISOString(),
-    };
-    try {
-      await this.publisher.publish(OrderRoutingKey.Failed, failed);
-    } catch (error) {
-      this.logger.error(
-        `Failed to publish OrderFailed for order ${event.orderId}`,
-        error as Error,
-      );
-    }
   }
 }

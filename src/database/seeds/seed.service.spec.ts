@@ -41,7 +41,7 @@ describe('SeedService', () => {
 
     expect(usersMock.save).toHaveBeenCalledTimes(1);
     expect(productsMock.insert).toHaveBeenCalledTimes(1);
-    const inserted = productsMock.insert.mock.calls[0][0] as unknown[];
+    const [inserted] = productsMock.insert.mock.calls[0] as [unknown[]];
     expect(inserted.length).toBeGreaterThan(0);
   });
 
@@ -56,9 +56,10 @@ describe('SeedService', () => {
     // DB first, then re-running as if those already exist.
     productsMock.find.mockResolvedValueOnce([]);
     await service.onApplicationBootstrap();
-    const seededSkus = (productsMock.insert.mock.calls[0][0] as Array<{ sku: string }>).map(
-      (p) => p.sku,
-    );
+    const [insertedForSkus] = productsMock.insert.mock.calls[0] as [
+      Array<{ sku: string }>,
+    ];
+    const seededSkus = insertedForSkus.map((p) => p.sku);
     jest.clearAllMocks();
 
     usersMock.findOneBy.mockResolvedValue({ id: 'admin-1' });

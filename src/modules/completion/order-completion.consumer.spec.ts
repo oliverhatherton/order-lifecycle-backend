@@ -3,7 +3,7 @@ import { ConsumeMessage } from 'amqplib';
 import { Nack } from '@golevelup/nestjs-rabbitmq';
 import { OrderCompletionConsumer } from '@/modules/completion/order-completion.consumer';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { fakeCls } from '@/modules/messaging/testing/fake-cls';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { OrderStatus } from '@/entities/order/OrderStatus';
@@ -15,7 +15,7 @@ import {
 describe('OrderCompletionConsumer', () => {
   const inboxMock = { runOnce: jest.fn() };
   const ordersMock = { transitionOrder: jest.fn() };
-  const publisherMock = { publish: jest.fn() };
+  const outboxMock = { enqueue: jest.fn() };
 
   let consumer: OrderCompletionConsumer;
 
@@ -34,12 +34,12 @@ describe('OrderCompletionConsumer', () => {
     consumer = new OrderCompletionConsumer(
       inboxMock as unknown as InboxService,
       ordersMock as unknown as OrdersService,
-      publisherMock as unknown as EventPublisher,
+      outboxMock as unknown as OutboxService,
       fakeCls(),
     );
   });
 
-  it('transitions PAID → COMPLETED and publishes OrderCompleted', async () => {
+  it('transitions PAID → COMPLETED and enqueues OrderCompleted', async () => {
     const manager = {} as EntityManager;
     inboxMock.runOnce.mockImplementation(
       async (
@@ -59,18 +59,19 @@ describe('OrderCompletionConsumer', () => {
       OrderStatus.COMPLETED,
       manager,
     );
-    expect(publisherMock.publish).toHaveBeenCalledWith(
+    expect(outboxMock.enqueue).toHaveBeenCalledWith(
+      manager,
       OrderRoutingKey.Completed,
       expect.objectContaining({ orderId: 'order-1', userId: 'user-1' }),
     );
   });
 
-  it('does not republish when already processed', async () => {
+  it('does not re-enqueue when already processed', async () => {
     inboxMock.runOnce.mockResolvedValue(false);
 
     await consumer.onPaymentProcessed(event, messageWith('msg-1'));
 
-    expect(publisherMock.publish).not.toHaveBeenCalled();
+    expect(outboxMock.enqueue).not.toHaveBeenCalled();
   });
 
   it('dead-letters a message with no messageId', async () => {

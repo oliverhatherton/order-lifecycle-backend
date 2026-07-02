@@ -148,9 +148,9 @@ describe('Observability — metrics (e2e)', () => {
         .expect(200);
 
       const body = response.body as MetricsHistoryResponseDTO;
-      expect(body.points.some((p) => p.bucketStart === ancient.toISOString())).toBe(
-        true,
-      );
+      expect(
+        body.points.some((p) => p.bucketStart === ancient.toISOString()),
+      ).toBe(true);
     });
 
     it('caps bucketed history to the most recent buckets, not the oldest', async () => {
@@ -185,7 +185,9 @@ describe('Observability — metrics (e2e)', () => {
       const oldestKept = new Date(body.points[0].bucketStart).getTime();
       expect(oldestKept).toBeGreaterThan(now - 501 * 60 * 60 * 1000);
       // The response is still chronological (ascending).
-      const timestamps = body.points.map((p) => new Date(p.bucketStart).getTime());
+      const timestamps = body.points.map((p) =>
+        new Date(p.bucketStart).getTime(),
+      );
       expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
     });
   });

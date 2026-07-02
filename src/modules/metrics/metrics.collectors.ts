@@ -43,6 +43,11 @@ export const dbQueryDuration = new Histogram({
   buckets: DURATION_BUCKETS,
 });
 
+export const outboxRelayedTotal = new Counter({
+  name: 'outbox_relayed_messages_total',
+  help: 'Messages successfully relayed from the outbox table to the broker.',
+});
+
 /**
  * Sink for durable metric history, set once at boot by
  * MetricsPersistenceService.onModuleInit. Optional by design: this module has
@@ -98,6 +103,13 @@ export function recordTerminalState(
 ): void {
   ordersTerminalTotal.inc({ state });
   sink?.record('orders_terminal', 1, { state });
+}
+
+/** Records a batch of outbox rows successfully published to the broker. */
+export function recordOutboxRelayed(count: number): void {
+  if (count === 0) return;
+  outboxRelayedTotal.inc(count);
+  sink?.record('outbox_relayed', count);
 }
 
 /** Times a database operation, recording its duration regardless of outcome. */

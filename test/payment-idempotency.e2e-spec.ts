@@ -11,6 +11,7 @@ import { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 import { ProductEntity } from '@/entities/product/ProductEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
 import {
   ORDER_EXCHANGE,
@@ -39,11 +40,13 @@ describe('Payment idempotency (e2e)', () => {
       ProductEntity,
       ProcessedMessageEntity,
       PaymentAuthorizationEntity,
+      OutboxMessageEntity,
     ],
     imports: [AuthModule, OrdersModule, PaymentModule],
     truncate: [
       'payment_authorizations',
       'processed_messages',
+      'outbox_messages',
       'order_items',
       'orders',
       'refresh_tokens',

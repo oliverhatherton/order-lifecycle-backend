@@ -14,6 +14,7 @@ import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
 import { OrderResponseDTO } from '@/modules/orders/dto/OrderResponseDTO';
 import {
   createOrderViaCart,
@@ -50,10 +51,12 @@ describe('Order caching (e2e)', () => {
       CartEntity,
       CartItemEntity,
       ProcessedMessageEntity,
+      OutboxMessageEntity,
     ],
     imports: [AuthModule, OrdersModule, ProductsModule, CartModule],
     truncate: [
       'processed_messages',
+      'outbox_messages',
       'order_items',
       'orders',
       'cart_items',
@@ -128,7 +131,9 @@ describe('Order caching (e2e)', () => {
 
     // The read is still served from cache — proving it didn't hit the DB.
     const second = await getOrder(token, id).expect(200);
-    expect((second.body as OrderResponseDTO).status).toBe(OrderStatus.COMPLETED);
+    expect((second.body as OrderResponseDTO).status).toBe(
+      OrderStatus.COMPLETED,
+    );
   });
 
   it('invalidates the cache on a transition so the next read is fresh', async () => {

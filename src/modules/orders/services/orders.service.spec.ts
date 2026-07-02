@@ -4,7 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import type { EntityManager } from 'typeorm';
 import { OrdersService } from '@/modules/orders/services/orders.service';
-import { EventPublisher } from '@/modules/messaging/event-publisher';
+import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { CacheService } from '@/modules/cache/cache.service';
 import { ProductsService } from '@/modules/products/products.service';
 import { OrderRoutingKey } from '@/modules/messaging/events/order-events';
@@ -33,10 +33,11 @@ describe('OrdersService', () => {
     createQueryBuilder: jest.fn(() => queryBuilderMock),
   };
 
-  // Simulates the EntityManager createOrder's transaction runs against:
-  // create() shallow-merges like TypeORM's real create(), stamping the
-  // timestamps @CreateDateColumn would set on the real save(); save() echoes
-  // back.
+  // Simulates the EntityManager createOrder's and initiatePayment's
+  // transactions run against: create() shallow-merges like TypeORM's real
+  // create(), stamping the timestamps @CreateDateColumn would set on the
+  // real save(); save() echoes back; createQueryBuilder() reuses the same
+  // queryBuilderMock the repository mock does, for initiatePayment's claim.
   const managerMock = {
     create: jest.fn((_entityClass: unknown, data: object) => ({
       status: OrderStatus.PENDING,
@@ -46,6 +47,7 @@ describe('OrdersService', () => {
       ...data,
     })),
     save: jest.fn((value: unknown) => Promise.resolve(value)),
+    createQueryBuilder: jest.fn(() => queryBuilderMock),
   };
 
   const dataSourceMock = {
@@ -54,8 +56,8 @@ describe('OrdersService', () => {
     ),
   };
 
-  const publisherMock = {
-    publish: jest.fn(),
+  const outboxMock = {
+    enqueue: jest.fn(),
   };
 
   const cacheMock = {
@@ -86,8 +88,8 @@ describe('OrdersService', () => {
           useValue: dataSourceMock,
         },
         {
-          provide: EventPublisher,
-          useValue: publisherMock,
+          provide: OutboxService,
+          useValue: outboxMock,
         },
         {
           provide: CacheService,
@@ -117,7 +119,7 @@ describe('OrdersService', () => {
     ];
 
     it('creates, persists, and announces a PENDING order with its line items', async () => {
-      publisherMock.publish.mockResolvedValue(undefined);
+      outboxMock.enqueue.mockResolvedValue(undefined);
 
       const result = await service.createOrder('user-1', lines);
 
@@ -132,26 +134,27 @@ describe('OrdersService', () => {
         productName: 'Widget',
         quantity: 2,
       });
-      expect(publisherMock.publish).toHaveBeenCalledWith(
+      expect(outboxMock.enqueue).toHaveBeenCalledWith(
+        managerMock,
         OrderRoutingKey.Created,
         expect.objectContaining({ userId: 'user-1' }),
       );
     });
 
     it("invalidates the owner's cached order list", async () => {
-      publisherMock.publish.mockResolvedValue(undefined);
+      outboxMock.enqueue.mockResolvedValue(undefined);
 
       await service.createOrder('user-1', lines);
 
       expect(cacheMock.del).toHaveBeenCalledWith('orders:user:user-1');
     });
 
-    it('still returns the saved order if publishing fails (publish-after-commit)', async () => {
-      publisherMock.publish.mockRejectedValue(new Error('broker down'));
+    it('rolls back the order (no partial commit) if the outbox write fails', async () => {
+      outboxMock.enqueue.mockRejectedValue(new Error('db unavailable'));
 
-      const result = await service.createOrder('user-1', lines);
-
-      expect(result.userId).toBe('user-1');
+      await expect(service.createOrder('user-1', lines)).rejects.toThrow(
+        'db unavailable',
+      );
     });
   });
 
@@ -387,7 +390,7 @@ describe('OrdersService', () => {
   });
 
   describe('initiatePayment', () => {
-    it('claims a RESERVED order and publishes the payment-confirmed event', async () => {
+    it('claims a RESERVED order and enqueues the payment-confirmed event', async () => {
       const order = OrderEntityMother.create({
         id: 'order-1',
         userId: 'user-1',
@@ -396,14 +399,15 @@ describe('OrdersService', () => {
       cacheMock.get.mockResolvedValue(undefined);
       repositoryMock.findOne.mockResolvedValue(order);
       queryBuilderMock.execute.mockResolvedValue({ affected: 1 });
-      publisherMock.publish.mockResolvedValue(undefined);
+      outboxMock.enqueue.mockResolvedValue(undefined);
 
       const result = await service.initiatePayment('order-1', 'user-1');
 
       expect(queryBuilderMock.where).toHaveBeenCalledWith('id = :id', {
         id: 'order-1',
       });
-      expect(publisherMock.publish).toHaveBeenCalledWith(
+      expect(outboxMock.enqueue).toHaveBeenCalledWith(
+        managerMock,
         OrderRoutingKey.InventoryReserved,
         expect.objectContaining({ orderId: 'order-1', userId: 'user-1' }),
       );
@@ -424,7 +428,7 @@ describe('OrdersService', () => {
         service.initiatePayment('order-1', 'user-1'),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(queryBuilderMock.execute).not.toHaveBeenCalled();
-      expect(publisherMock.publish).not.toHaveBeenCalled();
+      expect(outboxMock.enqueue).not.toHaveBeenCalled();
     });
 
     it('throws ConflictException when a concurrent claim already won (affected 0)', async () => {
@@ -440,7 +444,7 @@ describe('OrdersService', () => {
       await expect(
         service.initiatePayment('order-1', 'user-1'),
       ).rejects.toBeInstanceOf(ConflictException);
-      expect(publisherMock.publish).not.toHaveBeenCalled();
+      expect(outboxMock.enqueue).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException for an order the caller does not own', async () => {

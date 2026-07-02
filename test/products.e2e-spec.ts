@@ -5,7 +5,11 @@ import { UserEntity } from '@/entities/user/UserEntity';
 import { RefreshTokenEntity } from '@/entities/refresh-token/RefreshTokenEntity';
 import { ProductEntity } from '@/entities/product/ProductEntity';
 import { ProductResponseDTO } from '@/modules/products/dto/ProductResponseDTO';
-import { createProduct, registerAndLogin, setupE2eTest } from '@test/support/e2e';
+import {
+  createProduct,
+  registerAndLogin,
+  setupE2eTest,
+} from '@test/support/e2e';
 
 describe('Products (e2e)', () => {
   const ctx = setupE2eTest({

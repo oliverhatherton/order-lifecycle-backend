@@ -13,8 +13,15 @@ import { ProductEntity } from '@/entities/product/ProductEntity';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
-import { ORDER_EXCHANGE, OrderRoutingKey } from '@/modules/messaging/events/order-events';
-import type { OrderCreatedEvent, OrderFailedEvent } from '@/modules/messaging/events/order-events';
+import { OutboxMessageEntity } from '@/entities/outbox-message/OutboxMessageEntity';
+import {
+  ORDER_EXCHANGE,
+  OrderRoutingKey,
+} from '@/modules/messaging/events/order-events';
+import type {
+  OrderCreatedEvent,
+  OrderFailedEvent,
+} from '@/modules/messaging/events/order-events';
 import {
   createOrderViaCart,
   createProduct,
@@ -34,10 +41,18 @@ describe('Inventory consumer (e2e)', () => {
       CartEntity,
       CartItemEntity,
       ProcessedMessageEntity,
+      OutboxMessageEntity,
     ],
-    imports: [AuthModule, OrdersModule, InventoryModule, ProductsModule, CartModule],
+    imports: [
+      AuthModule,
+      OrdersModule,
+      InventoryModule,
+      ProductsModule,
+      CartModule,
+    ],
     truncate: [
       'processed_messages',
+      'outbox_messages',
       'order_items',
       'orders',
       'cart_items',
@@ -92,7 +107,8 @@ describe('Inventory consumer (e2e)', () => {
       void amqp.channel.consume(
         queue,
         (msg) => {
-          if (msg) resolve(JSON.parse(msg.content.toString()) as OrderFailedEvent);
+          if (msg)
+            resolve(JSON.parse(msg.content.toString()) as OrderFailedEvent);
         },
         { noAck: true },
       );

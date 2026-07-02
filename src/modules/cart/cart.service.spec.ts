@@ -42,7 +42,10 @@ describe('CartService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CartService,
-        { provide: getRepositoryToken(CartEntity), useValue: cartRepositoryMock },
+        {
+          provide: getRepositoryToken(CartEntity),
+          useValue: cartRepositoryMock,
+        },
         {
           provide: getRepositoryToken(CartItemEntity),
           useValue: cartItemRepositoryMock,
@@ -173,7 +176,9 @@ describe('CartService', () => {
       cartRepositoryMock.findOne.mockResolvedValue({
         id: 'cart-1',
         userId: 'user-1',
-        items: [{ productId: 'product-1', quantity: 1, product: { name: 'Widget' } }],
+        items: [
+          { productId: 'product-1', quantity: 1, product: { name: 'Widget' } },
+        ],
       });
       queryBuilderMock.execute.mockResolvedValue({ affected: 0 });
 
