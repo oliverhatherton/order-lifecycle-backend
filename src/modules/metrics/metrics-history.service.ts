@@ -11,6 +11,9 @@ import { MetricResolution } from '@/modules/metrics/metrics.constants';
 
 /** Bucket width in seconds for each non-raw resolution. */
 const BUCKET_SECONDS: Partial<Record<MetricResolution, number>> = {
+  [MetricResolution.ONE_MINUTE]: 60,
+  [MetricResolution.FIVE_MINUTES]: 5 * 60,
+  [MetricResolution.FIFTEEN_MINUTES]: 15 * 60,
   [MetricResolution.ONE_HOUR]: 3600,
   [MetricResolution.SIX_HOURS]: 6 * 3600,
   [MetricResolution.TWELVE_HOURS]: 12 * 3600,

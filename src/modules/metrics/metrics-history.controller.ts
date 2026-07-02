@@ -36,8 +36,12 @@ export class MetricsHistoryController {
       'collecting this metric), not a rolling window — open the page and ' +
       'get everything since boot in one call. `resolution=raw` returns ' +
       'individual samples (capped at the 500 most recent); ' +
-      '1h/6h/12h/1d/1w/1mo group samples into buckets of that width so the ' +
-      'response size never depends on how much history has accumulated.',
+      '1m/5m/15m/1h/6h/12h/1d/1w/1mo group samples into buckets of that ' +
+      'width so the response size never depends on how much history has ' +
+      'accumulated. Use a fine resolution (1m/5m) to chart traffic spikes ' +
+      'against the interval-sampled system gauges (event_loop_lag_ms, ' +
+      'memory_*, cpu_percent), which are recorded every 15s for the whole ' +
+      'uptime.',
   })
   @ApiOkResponse({ type: MetricsHistoryResponseDTO })
   async get(

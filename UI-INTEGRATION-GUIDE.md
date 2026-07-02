@@ -990,9 +990,14 @@ Example Jaeger query:
 Every Prometheus collector in the app (`consumer_messages`,
 `consumer_processing_duration_ms`, `orders_terminal`, `db_query_duration_ms`,
 `http_request_duration_ms`) is mirrored into a Postgres table (`metric_events`)
-as it's recorded. `GET /metrics/history` reads that table — so unlike
-`/metrics`, it survives a restart, and a UI dashboard doesn't have to scrape
-and store history itself.
+as it's recorded. On top of that, system gauges (`event_loop_lag_ms`,
+`event_loop_lag_max_ms`, `memory_heap_used_bytes`, `memory_rss_bytes`,
+`cpu_percent`) are sampled into the same table **every 15 seconds for the
+whole uptime** — so there's a continuous baseline even while no traffic is
+happening, and a spike in request latency can be lined up against what the
+event loop and memory were doing at that exact moment. `GET /metrics/history`
+reads that table — so unlike `/metrics`, it survives a restart, and a UI
+dashboard doesn't have to scrape and store history itself.
 
 ### Fetching History
 
@@ -1010,8 +1015,14 @@ Query params:
                 orders_terminal
                 db_query_duration_ms
                 http_request_duration_ms
+                stock_replenished
+                event_loop_lag_ms          (sampled every 15s)
+                event_loop_lag_max_ms      (sampled every 15s)
+                memory_heap_used_bytes     (sampled every 15s)
+                memory_rss_bytes           (sampled every 15s)
+                cpu_percent                (sampled every 15s)
   resolution  optional, default "raw". One of:
-                raw | 1h | 6h | 12h | 1d | 1w | 1mo
+                raw | 1m | 5m | 15m | 1h | 6h | 12h | 1d | 1w | 1mo
   from        optional. ISO-8601 start of the window (inclusive).
   to          optional. ISO-8601 end of the window (inclusive), default now.
 
@@ -1039,7 +1050,20 @@ chart depends on the metric:
 | `consumer_messages` | Messages a consumer processed/skipped/retried/failed | `sum` |
 | `db_query_duration_ms` | DB operation latency | `avg` (or `max` for a worst-case line) |
 | `consumer_processing_duration_ms` | Time a consumer spent per message | `avg` |
-| `http_request_duration_ms` | HTTP request latency | `avg` |
+| `http_request_duration_ms` | HTTP request latency | `avg` (and `count` for traffic volume — requests per bucket) |
+| `event_loop_lag_ms` | Mean event loop lag over each 15s sample window | `avg` |
+| `event_loop_lag_max_ms` | Worst-case event loop stall in each 15s window | `max` |
+| `memory_heap_used_bytes` | V8 heap in use | `avg` (or `max`) |
+| `memory_rss_bytes` | Process resident set size | `avg` (or `max`) |
+| `cpu_percent` | Process CPU over each 15s window (user+system) | `avg` |
+
+**Correlating a traffic spike:** fetch `http_request_duration_ms`,
+`event_loop_lag_ms` and `cpu_percent` at the same fine resolution (`1m` or
+`5m`) and overlay them — `count` on the first is your requests-per-bucket
+traffic line, `avg` is response time, and the system gauges show what that
+load did to the process. The gauges are interval-sampled, so they have points
+in every bucket across the whole uptime, not just while requests were coming
+in.
 
 ### Resolutions — why the response stays small
 
@@ -1051,6 +1075,9 @@ request needed to "load more."
 | Resolution | Bucket width | Response is capped at |
 |---|---|---|
 | `raw` | none (individual samples) | 500 samples (most recent) |
+| `1m` | 1 minute | 500 buckets (~8 hours) |
+| `5m` | 5 minutes | 500 buckets (~41 hours) |
+| `15m` | 15 minutes | 500 buckets (~5 days) |
 | `1h` | 1 hour | 500 buckets |
 | `6h` | 6 hours | 500 buckets |
 | `12h` | 12 hours | 500 buckets |
@@ -1060,12 +1087,11 @@ request needed to "load more."
 
 The cap (bucketing happens in SQL, not client-side) is what makes "whole
 uptime" and "small response" compatible: a chart backed by a year of data
-looks the same size on the wire as one backed by a day — pick a coarser
-resolution (e.g. `1d` or `1w`) for a server that's been up a long time, since
-500 buckets at `1h` only covers ~3 weeks before older buckets get cut off by
-the cap (`ORDER BY bucket_start ASC LIMIT 500`, so a very long history at a
-fine resolution trims from the *end*, not the start — pass `from`/`to`
-explicitly to page through it if you need that).
+looks the same size on the wire as one backed by a day. When a history is
+longer than 500 buckets at the requested resolution, the **most recent** 500
+are kept (oldest buckets fall off the front) — so pick a resolution whose
+span covers the window you care about (e.g. `1m` covers ~8 hours, `1h`
+~3 weeks), or pass `from`/`to` explicitly to page through older history.
 
 ### Example: a small dashboard chart
 
