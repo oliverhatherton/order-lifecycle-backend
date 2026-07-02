@@ -30,7 +30,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "test:load": "ts-node -r tsconfig-paths/register ops/load-test.ts"
+    "test:load": "ts-node -r tsconfig-paths/register ops/load-test.ts",
+    "load:format-benchmark": "ts-node -r tsconfig-paths/register ops/format-benchmark.ts"
   },
   "dependencies": {
     "@golevelup/nestjs-rabbitmq": "^9.0.2",

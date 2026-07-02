@@ -88,6 +88,10 @@ jobs:
     # merge gate, just a recorded data point (see ops/load-test.ts).
     if: github.event_name == 'push'
     timeout-minutes: 10
+    # contents: write lets benchmark-action/github-action-benchmark push the
+    # updated trend chart data to the gh-pages branch (main-branch runs only).
+    permissions:
+      contents: write
     services:
       postgres:
         image: postgres:16
@@ -160,7 +164,53 @@ jobs:
           LOAD_TEST_BASE_URL: http://localhost:3000
           LOAD_TEST_DURATION_SECONDS: '10'
           LOAD_TEST_CONNECTIONS: '20'
+          LOAD_TEST_OUTPUT: load-test-results.json
         run: pnpm test:load
+
+      - name: Upload load-test results
+        # Upload even when the run flags failures, so the scores are always
+        # captured. Skip only if the file was never written (e.g. app crash).
+        if: always() && hashFiles('load-test-results.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: load-test-results.json
+
+      - name: Format benchmark data
+        if: hashFiles('load-test-results.json') != ''
+        run: >-
+          pnpm load:format-benchmark load-test-results.json
+          load-test-benchmark-throughput.json load-test-benchmark-latency.json
+
+      # Trend charts only track main — feature branches would otherwise churn
+      # the gh-pages history with noise that isn't representative of prod.
+      - name: Store throughput trend (req/sec, bigger is better)
+        if: github.ref == 'refs/heads/main' && hashFiles('load-test-benchmark-throughput.json') != ''
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customBiggerIsBetter
+          output-file-path: load-test-benchmark-throughput.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/throughput
+          name: Load test — throughput
+          auto-push: true
+          fail-on-alert: false
+          comment-on-alert: true
+          alert-threshold: '150%'
+
+      - name: Store latency trend (ms, smaller is better)
+        if: github.ref == 'refs/heads/main' && hashFiles('load-test-benchmark-latency.json') != ''
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: load-test-benchmark-latency.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/latency
+          name: Load test — latency
+          auto-push: true
+          fail-on-alert: false
+          comment-on-alert: true
+          alert-threshold: '150%'
 
       - name: App log
         if: always()

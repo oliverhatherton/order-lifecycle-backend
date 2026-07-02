@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises';
+
 import autocannon from 'autocannon';
 
 /**
@@ -18,6 +20,9 @@ const BASE_URL = process.env.LOAD_TEST_BASE_URL ?? 'http://localhost:3000';
 const DURATION_SECONDS = Number(process.env.LOAD_TEST_DURATION_SECONDS ?? 15);
 const CONNECTIONS = Number(process.env.LOAD_TEST_CONNECTIONS ?? 20);
 const HEALTH_TIMEOUT_MS = 60_000;
+// When set, the run's scores are written here as JSON so CI can upload them as
+// an artifact (see the `load-test` job in .github/workflows/ci.yml).
+const OUTPUT_PATH = process.env.LOAD_TEST_OUTPUT;
 
 interface LoginResponse {
   accessToken: string;
@@ -80,11 +85,30 @@ function summarize(label: string, result: autocannon.Result): void {
   }
 }
 
+interface EndpointScore {
+  label: string;
+  path: string;
+  requestsPerSec: number;
+  latency: {
+    p50: number;
+    p90: number;
+    p97_5: number;
+    p99: number;
+  };
+  non2xx: number;
+  errors: number;
+}
+
+interface RunResult {
+  result: autocannon.Result;
+  score: EndpointScore;
+}
+
 async function run(
   label: string,
   path: string,
   token?: string,
-): Promise<autocannon.Result> {
+): Promise<RunResult> {
   const result = await autocannon({
     url: `${BASE_URL}${path}`,
     connections: CONNECTIONS,
@@ -92,7 +116,37 @@ async function run(
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
   summarize(label, result);
-  return result;
+  const score: EndpointScore = {
+    label,
+    path,
+    requestsPerSec: Number(result.requests.average.toFixed(1)),
+    latency: {
+      p50: result.latency.p50,
+      p90: result.latency.p90,
+      p97_5: result.latency.p97_5,
+      p99: result.latency.p99,
+    },
+    non2xx: result.non2xx,
+    errors: result.errors,
+  };
+  return { result, score };
+}
+
+/** Writes the run's scores to OUTPUT_PATH as JSON, if one was configured. */
+async function writeScores(scores: EndpointScore[]): Promise<void> {
+  if (!OUTPUT_PATH) return;
+  const report = {
+    generatedAt: new Date().toISOString(),
+    commit: process.env.GITHUB_SHA ?? null,
+    config: {
+      baseUrl: BASE_URL,
+      connections: CONNECTIONS,
+      durationSeconds: DURATION_SECONDS,
+    },
+    endpoints: scores,
+  };
+  await writeFile(OUTPUT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  console.log(`\nWrote load-test scores to ${OUTPUT_PATH}`);
 }
 
 async function main(): Promise<void> {
@@ -108,7 +162,11 @@ async function main(): Promise<void> {
     await run('GET /orders (authenticated, cache-aside)', '/orders', token),
   ];
 
-  const hadFailures = results.some((r) => r.non2xx > 0 || r.errors > 0);
+  await writeScores(results.map((r) => r.score));
+
+  const hadFailures = results.some(
+    (r) => r.result.non2xx > 0 || r.result.errors > 0,
+  );
   if (hadFailures) {
     console.error('\nLoad test saw non-2xx responses or connection errors.');
     process.exitCode = 1;
