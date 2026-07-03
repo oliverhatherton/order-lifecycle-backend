@@ -124,6 +124,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # benchmark-action/github-action-benchmark expects gh-pages to already
+      # exist as an orphan branch — it fetches it but won't create it, so the
+      # first-ever run needs this bootstrapped once.
+      - name: Ensure gh-pages branch exists
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            CURRENT_SHA=$(git rev-parse HEAD)
+            git checkout --orphan gh-pages
+            git rm -rf . > /dev/null
+            git commit --allow-empty -m "chore: initialize gh-pages branch for benchmark trend data"
+            git push origin gh-pages
+            git checkout "$CURRENT_SHA"
+          fi
+
       - uses: pnpm/action-setup@v4
         with:
           # Pin to match the packageManager field so CI and local agree.
