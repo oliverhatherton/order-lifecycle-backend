@@ -250,6 +250,33 @@ describe('AuthController (e2e)', () => {
       await refreshWith(newRefreshToken).expect(401);
     });
 
+    it("leaves the user's other sessions alive when one family is revoked", async () => {
+      const compromised = await loginUser();
+      // A second, independent login (another device) — its own family.
+      const otherDevice = extractRefreshCookie(
+        await request(ctx.app.getHttpServer())
+          .post('/auth/login')
+          .send(LoginDTOMother.valid())
+          .expect(200),
+      );
+
+      await refreshWith(compromised).expect(200);
+      await refreshWith(compromised).expect(401); // reuse → family revoked
+
+      await refreshWith(otherDevice).expect(200);
+    });
+
+    it('lets only one of two concurrent refreshes with the same token win', async () => {
+      const refreshToken = await loginUser();
+
+      const responses = await Promise.all([
+        refreshWith(refreshToken),
+        refreshWith(refreshToken),
+      ]);
+
+      expect(responses.map((r) => r.status).sort()).toEqual([200, 401]);
+    });
+
     it('rejects an unknown refresh token with 401', async () => {
       await refreshWith('definitely-not-a-real-token').expect(401);
     });

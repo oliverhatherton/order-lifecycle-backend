@@ -74,6 +74,23 @@ describe('TokenService', () => {
       expect(persisted.tokenHash).toBe(sha256(result.refreshToken));
       expect(persisted.userId).toBe(user.id);
     });
+
+    it('starts a new token family per login', async () => {
+      const user = UserEntityMother.create();
+      jwtServiceMock.signAsync.mockResolvedValue('access-token');
+      configServiceMock.get.mockReturnValue(7);
+      refreshTokenRepositoryMock.create.mockImplementation(
+        (value: Partial<RefreshTokenEntity>) => value,
+      );
+
+      await service.issueTokens(user);
+      await service.issueTokens(user);
+
+      const [[first], [second]] = refreshTokenRepositoryMock.save.mock
+        .calls as [[RefreshTokenEntity], [RefreshTokenEntity]];
+      expect(first.familyId).toEqual(expect.any(String));
+      expect(first.familyId).not.toBe(second.familyId);
+    });
   });
 
   describe('rotate', () => {
@@ -100,15 +117,18 @@ describe('TokenService', () => {
       expect(refreshTokenRepositoryMock.save).not.toHaveBeenCalled();
     });
 
-    it('revokes the presented token and issues a new pair when valid', async () => {
+    it('atomically revokes the presented token and issues a successor in the same family', async () => {
       const user = UserEntityMother.create();
       const stored = {
+        id: 'token-id',
         userId: user.id,
+        familyId: 'family-1',
         revoked: false,
         expiresAt: new Date(Date.now() + 60_000),
         user,
       };
       refreshTokenRepositoryMock.findOne.mockResolvedValue(stored);
+      refreshTokenRepositoryMock.update.mockResolvedValue({ affected: 1 });
       jwtServiceMock.signAsync.mockResolvedValue('new-access-token');
       configServiceMock.get.mockReturnValue(7);
       refreshTokenRepositoryMock.create.mockImplementation(
@@ -117,13 +137,42 @@ describe('TokenService', () => {
 
       const result = await service.rotate('valid');
 
-      // The old token is revoked...
-      expect(stored.revoked).toBe(true);
-      expect(refreshTokenRepositoryMock.save).toHaveBeenCalledWith(stored);
+      // The old token is revoked via a conditional claim...
+      expect(refreshTokenRepositoryMock.update).toHaveBeenCalledWith(
+        { id: 'token-id', revoked: false },
+        { revoked: true },
+      );
+      // ...its successor stays in the same family...
+      const [persisted] = refreshTokenRepositoryMock.save.mock.calls[0] as [
+        RefreshTokenEntity,
+      ];
+      expect(persisted.familyId).toBe('family-1');
       // ...and a brand-new pair is returned.
       expect(result.accessToken).toBe('new-access-token');
       expect(typeof result.refreshToken).toBe('string');
       expect(result.refreshToken.length).toBeGreaterThan(0);
+    });
+
+    it('treats losing the rotation claim to a concurrent refresh as reuse', async () => {
+      refreshTokenRepositoryMock.findOne.mockResolvedValue({
+        id: 'token-id',
+        userId: 'user-id',
+        familyId: 'family-1',
+        revoked: false,
+        expiresAt: new Date(Date.now() + 60_000),
+        user: UserEntityMother.create(),
+      });
+      // The claim matches nothing — another request rotated it first.
+      refreshTokenRepositoryMock.update.mockResolvedValueOnce({ affected: 0 });
+
+      await expect(service.rotate('raced')).rejects.toThrow(
+        'Invalid refresh token',
+      );
+      expect(refreshTokenRepositoryMock.update).toHaveBeenLastCalledWith(
+        { familyId: 'family-1' },
+        { revoked: true },
+      );
+      expect(refreshTokenRepositoryMock.save).not.toHaveBeenCalled();
     });
 
     it('rejects refresh for a disabled user without rotating the token', async () => {
@@ -140,9 +189,10 @@ describe('TokenService', () => {
       expect(refreshTokenRepositoryMock.save).not.toHaveBeenCalled();
     });
 
-    it('treats re-presenting a revoked token as reuse and revokes the whole family', async () => {
+    it('treats re-presenting a revoked token as reuse and revokes only its family', async () => {
       refreshTokenRepositoryMock.findOne.mockResolvedValue({
         userId: 'user-id',
+        familyId: 'family-1',
         revoked: true,
         expiresAt: new Date(Date.now() + 60_000),
         user: UserEntityMother.create(),
@@ -152,7 +202,7 @@ describe('TokenService', () => {
         'Invalid refresh token',
       );
       expect(refreshTokenRepositoryMock.update).toHaveBeenCalledWith(
-        { userId: 'user-id' },
+        { familyId: 'family-1' },
         { revoked: true },
       );
     });

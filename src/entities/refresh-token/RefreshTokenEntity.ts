@@ -11,9 +11,10 @@ import { UserEntity } from '@/entities/user/UserEntity';
 
 /**
  * Server-side record of an issued refresh token. Only the SHA-256 hash of the
- * token is stored, so a database leak does not expose usable tokens. The
- * `revoked` flag and `expiresAt` exist to support revocation/expiry checks in
- * later stories.
+ * token is stored, so a database leak does not expose usable tokens.
+ * `familyId` groups every token descended from one login via rotation, so
+ * reuse detection can revoke one session without logging the user out
+ * everywhere (see TokenService.rotate).
  */
 @Entity('refresh_tokens')
 export class RefreshTokenEntity {
@@ -26,6 +27,11 @@ export class RefreshTokenEntity {
   @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
   user?: UserEntity;
+
+  // Indexed: reuse detection revokes by family.
+  @Index()
+  @Column('uuid')
+  familyId: string;
 
   @Index({ unique: true })
   @Column()
