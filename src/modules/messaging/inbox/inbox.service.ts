@@ -3,6 +3,17 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import { ProcessedMessageEntity } from '@/entities/processed-message/ProcessedMessageEntity';
 
+const UNIQUE_VIOLATION = '23505';
+const INBOX_TABLE = 'processed_messages';
+
+function isInboxDuplicate(error: unknown): boolean {
+  if (!(error instanceof QueryFailedError)) return false;
+  const driverError = error.driverError as { code?: string; table?: string };
+  return (
+    driverError.code === UNIQUE_VIOLATION && driverError.table === INBOX_TABLE
+  );
+}
+
 /**
  * Idempotency guard for at-least-once message delivery. Runs `work` at most once
  * per (messageId, consumer): the work and the inbox record are committed in a
@@ -36,11 +47,11 @@ export class InboxService {
     } catch (error) {
       // A concurrent delivery committed first; the unique PK rejected ours.
       // The side effect from this (rolled-back) transaction is undone, so it is
-      // safe to treat the message as already processed.
-      if (
-        error instanceof QueryFailedError &&
-        (error.driverError as { code?: string }).code === '23505'
-      ) {
+      // safe to treat the message as already processed. Only a violation on
+      // the inbox table itself means that — a unique violation raised by
+      // `work` (some other table) is a real failure and must retry/dead-letter
+      // rather than be silently acked as a duplicate.
+      if (isInboxDuplicate(error)) {
         return false;
       }
       throw error;

@@ -30,6 +30,7 @@ describe('OrdersService', () => {
     findOneBy: jest.fn(),
     findOne: jest.fn(),
     find: jest.fn(),
+    update: jest.fn(),
     createQueryBuilder: jest.fn(() => queryBuilderMock),
   };
 
@@ -315,15 +316,13 @@ describe('OrdersService', () => {
   });
 
   describe('transitionOrder', () => {
-    it('applies and persists a legal transition', async () => {
+    it('applies a legal transition as a compare-and-set on the current status', async () => {
       const order = OrderEntityMother.create({
         id: 'order-1',
         status: OrderStatus.PENDING,
       });
       repositoryMock.findOneBy.mockResolvedValue(order);
-      repositoryMock.save.mockImplementation((value: OrderEntity) =>
-        Promise.resolve(value),
-      );
+      repositoryMock.update.mockResolvedValue({ affected: 1 });
 
       const result = await service.transitionOrder(
         'order-1',
@@ -331,7 +330,26 @@ describe('OrdersService', () => {
       );
 
       expect(result.status).toBe(OrderStatus.RESERVED);
-      expect(repositoryMock.save).toHaveBeenCalledWith(order);
+      expect(repositoryMock.update).toHaveBeenCalledWith(
+        { id: 'order-1', status: OrderStatus.PENDING },
+        { status: OrderStatus.RESERVED },
+      );
+    });
+
+    it('refuses to overwrite a status changed concurrently since it was read', async () => {
+      // Read as PENDING, but a cancel committed before our write.
+      repositoryMock.findOneBy.mockResolvedValue(
+        OrderEntityMother.create({
+          id: 'order-1',
+          status: OrderStatus.PENDING,
+        }),
+      );
+      repositoryMock.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.transitionOrder('order-1', OrderStatus.RESERVED),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(cacheMock.del).not.toHaveBeenCalled();
     });
 
     it('invalidates the cached order and the owner list after a transition', async () => {
@@ -341,9 +359,7 @@ describe('OrdersService', () => {
         status: OrderStatus.PENDING,
       });
       repositoryMock.findOneBy.mockResolvedValue(order);
-      repositoryMock.save.mockImplementation((value: OrderEntity) =>
-        Promise.resolve(value),
-      );
+      repositoryMock.update.mockResolvedValue({ affected: 1 });
 
       await service.transitionOrder('order-1', OrderStatus.RESERVED);
 
@@ -364,7 +380,7 @@ describe('OrdersService', () => {
         service.transitionOrder('order-1', OrderStatus.PAID),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(order.status).toBe(OrderStatus.PENDING);
-      expect(repositoryMock.save).not.toHaveBeenCalled();
+      expect(repositoryMock.update).not.toHaveBeenCalled();
     });
 
     it('rejects any transition out of a terminal state', async () => {
@@ -377,7 +393,7 @@ describe('OrdersService', () => {
       await expect(
         service.transitionOrder('order-1', OrderStatus.PENDING),
       ).rejects.toBeInstanceOf(ConflictException);
-      expect(repositoryMock.save).not.toHaveBeenCalled();
+      expect(repositoryMock.update).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when the order does not exist', async () => {

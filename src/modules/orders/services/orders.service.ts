@@ -213,8 +213,21 @@ export class OrdersService {
       throw new ConflictException(`Illegal order transition: ${from} -> ${to}`);
     }
 
+    // Compare-and-set on the status we validated against, not a blind save:
+    // a concurrent writer (e.g. a cancel landing between our read and this
+    // write) changes the row's status, the WHERE stops matching, and we
+    // refuse rather than silently overwriting its result. Inside a consumer's
+    // inbox transaction the throw rolls back the side effects with it.
+    const claim = await timeDb('order.update', () =>
+      repository.update({ id: orderId, status: from }, { status: to }),
+    );
+    if (claim.affected === 0) {
+      throw new ConflictException(
+        `Order ${orderId} changed concurrently; ${from} -> ${to} not applied`,
+      );
+    }
     order.status = to;
-    const saved = await timeDb('order.update', () => repository.save(order));
+    const saved = order;
     this.logger.log(`Order ${orderId} transitioned ${from} -> ${to}`);
 
     // A terminal status is a business outcome worth a dedicated counter so a

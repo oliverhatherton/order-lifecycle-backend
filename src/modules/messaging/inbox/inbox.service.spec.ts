@@ -51,14 +51,30 @@ describe('InboxService', () => {
     expect(managerMock.insert).not.toHaveBeenCalled();
   });
 
-  it('treats a unique-violation race as already processed', async () => {
+  it('treats a unique-violation race on the inbox table as already processed', async () => {
     dataSourceMock.transaction.mockRejectedValue(
-      new QueryFailedError('insert', [], { code: '23505' } as unknown as Error),
+      new QueryFailedError('insert', [], {
+        code: '23505',
+        table: 'processed_messages',
+      } as unknown as Error),
     );
 
     const ran = await service.runOnce('msg-1', 'inventory', jest.fn());
 
     expect(ran).toBe(false);
+  });
+
+  it('rethrows a unique violation raised by the work itself (another table)', async () => {
+    dataSourceMock.transaction.mockRejectedValue(
+      new QueryFailedError('insert', [], {
+        code: '23505',
+        table: 'payment_authorizations',
+      } as unknown as Error),
+    );
+
+    await expect(
+      service.runOnce('msg-1', 'inventory', jest.fn()),
+    ).rejects.toBeInstanceOf(QueryFailedError);
   });
 
   it('rethrows unexpected errors', async () => {
