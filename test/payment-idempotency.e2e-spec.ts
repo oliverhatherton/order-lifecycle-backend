@@ -27,9 +27,16 @@ import { registerAndLogin, setupE2eTest, waitFor } from '@test/support/e2e';
  * per order: redelivering the same InventoryReserved leaves a single
  * authorization and a single charge, with the order still PAID.
  *
+ * Also covers the two cases a check-then-charge scheme gets wrong: two
+ * deliveries racing (both would see "no decision yet" and both charge), and a
+ * crash between charging and recording the decision (a stale claim).
+ *
  * Only Auth/Orders/Payment are imported (no inventory consumer), so the order is
  * driven to RESERVED by hand and payment is the sole consumer of the event.
  */
+// Keep the in-flight retry loop quick; production backoff is 1s/2s/4s.
+process.env.RABBITMQ_RETRY_BASE_DELAY_MS = '200';
+
 describe('Payment idempotency (e2e)', () => {
   const ctx = setupE2eTest({
     entities: [
@@ -115,5 +122,78 @@ describe('Payment idempotency (e2e)', () => {
     expect(charge).toHaveBeenCalledTimes(1); // not re-charged
     expect(await authorizationCount(id)).toBe(1); // single ledger entry
     expect(await orderStatus(id)).toBe(OrderStatus.PAID); // unchanged
+  });
+
+  /** Creates an order and moves it to RESERVED by hand. */
+  async function reservedOrder(): Promise<{ id: string; userId: string }> {
+    await registerAndLogin(ctx.app);
+    const user = await ctx.dataSource
+      .getRepository(UserEntity)
+      .findOneByOrFail({ email: 'test@example.com' });
+    const order = await ctx.app.get(OrdersService).createOrder(user.id, []);
+    await ctx.app
+      .get(OrdersService)
+      .transitionOrder(order.id, OrderStatus.RESERVED);
+    return { id: order.id, userId: user.id };
+  }
+
+  it('charges once when the same InventoryReserved is delivered twice concurrently', async () => {
+    const { id, userId } = await reservedOrder();
+    const gateway = ctx.app.get(PaymentGateway);
+    // A slow provider call widens the race window: the second delivery is
+    // guaranteed to arrive while the first is still mid-charge.
+    const charge = jest
+      .spyOn(gateway, 'charge')
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ authorized: true }), 500),
+          ),
+      );
+    const event: InventoryReservedEvent = {
+      orderId: id,
+      userId,
+      occurredAt: new Date().toISOString(),
+    };
+
+    await Promise.all([
+      publishReserved(event, 'idem-concurrent'),
+      publishReserved(event, 'idem-concurrent'),
+    ]);
+
+    await waitFor(async () => (await orderStatus(id)) === OrderStatus.PAID, {
+      timeoutMs: 10000,
+    });
+    // Give the losing delivery time to retry and settle as a no-op.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    expect(charge).toHaveBeenCalledTimes(1);
+    expect(await authorizationCount(id)).toBe(1);
+    expect(await orderStatus(id)).toBe(OrderStatus.PAID);
+  });
+
+  it('recovers a claim left undecided by a crash, re-calling the provider with the same idempotency key', async () => {
+    const { id, userId } = await reservedOrder();
+    // Simulate a delivery that claimed, (maybe) charged, then died before
+    // recording the decision — a minute ago.
+    await ctx.dataSource.query(
+      `INSERT INTO "payment_authorizations" ("orderId", "authorized", "createdAt")
+       VALUES ($1, NULL, now()::timestamp - interval '1 minute')`,
+      [id],
+    );
+    const charge = jest.spyOn(ctx.app.get(PaymentGateway), 'charge');
+
+    await publishReserved(
+      { orderId: id, userId, occurredAt: new Date().toISOString() },
+      'idem-stale',
+    );
+
+    await waitFor(async () => (await orderStatus(id)) === OrderStatus.PAID);
+    expect(charge).toHaveBeenCalledTimes(1);
+    expect(charge.mock.calls[0][1]).toBe(id); // same key the crashed attempt used
+    const stored = await ctx.dataSource
+      .getRepository(PaymentAuthorizationEntity)
+      .findOneByOrFail({ orderId: id });
+    expect(stored.authorized).toBe(true);
   });
 });

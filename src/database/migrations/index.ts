@@ -3,6 +3,7 @@ import { AddMetricEventsAndPaymentInitiatedAt1782907200000 } from '@/database/mi
 import { AddCartsProductsOrderItemsAndCancelled1782910000000 } from '@/database/migrations/1782910000000-AddCartsProductsOrderItemsAndCancelled';
 import { AddOutboxMessages1782920000000 } from '@/database/migrations/1782920000000-AddOutboxMessages';
 import { AddRefreshTokenFamily1782930000000 } from '@/database/migrations/1782930000000-AddRefreshTokenFamily';
+import { PaymentAuthorizationClaim1782940000000 } from '@/database/migrations/1782940000000-PaymentAuthorizationClaim';
 
 /**
  * Explicit list of migrations for the running app. Referenced by class (not a
@@ -16,4 +17,5 @@ export const migrations = [
   AddCartsProductsOrderItemsAndCancelled1782910000000,
   AddOutboxMessages1782920000000,
   AddRefreshTokenFamily1782930000000,
+  PaymentAuthorizationClaim1782940000000,
 ];
