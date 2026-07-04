@@ -5,6 +5,7 @@ import { recordConsumerOutcome } from '@/modules/metrics/metrics.collectors';
 
 const ATTEMPTS_HEADER = 'x-attempts';
 const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_BASE_DELAY_MS = 1000;
 const logger = new Logger('RetryErrorHandler');
 
 function errorMessage(error: unknown): string {
@@ -17,28 +18,75 @@ function consumerOf(queue: string): string {
 }
 
 /**
- * Bounded-retry error handler for golevelup subscribers. When a handler throws,
- * the message is re-published to the same queue (preserving its messageId so the
- * inbox still dedupes) up to `maxRetries` times; once exhausted it is nacked
- * without requeue, so the broker dead-letters it to the DLX → DLQ. Retries are
- * immediate (no backoff), which is enough to ride out a transient failure or a
- * consumer crash mid-flow while keeping a genuinely poison message bounded.
+ * Base delay for the first retry. Read at failure time (not at decorator
+ * evaluation) so e2e suites can shrink it via env without slowing every
+ * resilience test down to real-world backoff.
+ */
+function baseDelayMs(): number {
+  const fromEnv = Number(process.env.RABBITMQ_RETRY_BASE_DELAY_MS);
+  return Number.isFinite(fromEnv) && fromEnv >= 0
+    ? fromEnv
+    : DEFAULT_BASE_DELAY_MS;
+}
+
+/** Exponential backoff: base, 2×base, 4×base, … for attempts 1, 2, 3, … */
+export function retryDelayMs(attempt: number, base = baseDelayMs()): number {
+  return base * 2 ** (attempt - 1);
+}
+
+/** The delay queue a retry waits in before dead-lettering back to `queue`. */
+export function retryQueueName(queue: string, delayMs: number): string {
+  return `${queue}.retry.${delayMs}ms`;
+}
+
+/**
+ * Bounded-retry error handler with exponential backoff for golevelup
+ * subscribers. When a handler throws, the message is parked in a per-delay
+ * "wait" queue whose `x-message-ttl` is the backoff for that attempt and whose
+ * dead-letter target is the original queue via the default exchange — so after
+ * the delay the broker moves it back for another try. The messageId is
+ * preserved so the inbox still dedupes. Once `maxRetries` is exhausted the
+ * message is nacked without requeue, so the broker dead-letters it to the
+ * DLX → DLQ.
+ *
+ * One queue per delay (rather than per-message `expiration` on a shared queue)
+ * because RabbitMQ only expires messages at the head of a queue: a 4s message
+ * in front of a 1s one would hold it back. Delays are deterministic (no
+ * jitter) for the same reason — the set of wait queues stays bounded at
+ * `maxRetries` per work queue.
  */
 export function createRetryErrorHandler(
   queue: string,
   maxRetries = DEFAULT_MAX_RETRIES,
 ): MessageErrorHandler {
-  return (channel: Channel, msg: ConsumeMessage, error: unknown): void => {
+  return async (
+    channel: Channel,
+    msg: ConsumeMessage,
+    error: unknown,
+  ): Promise<void> => {
     const headers = msg.properties.headers ?? {};
     const attempts = Number(headers[ATTEMPTS_HEADER] ?? 0);
 
     if (attempts < maxRetries) {
+      const attempt = attempts + 1;
+      const delayMs = retryDelayMs(attempt);
+      const waitQueue = retryQueueName(queue, delayMs);
       logger.warn(
-        `Retrying ${queue} (attempt ${attempts + 1}/${maxRetries}): ${errorMessage(error)}`,
+        `Retrying ${queue} in ${delayMs}ms (attempt ${attempt}/${maxRetries}): ${errorMessage(error)}`,
       );
-      channel.sendToQueue(queue, msg.content, {
+      // Idempotent declare — cheap after the first time, and keeps the wait
+      // queues out of the static topology (they only exist once needed).
+      await channel.assertQueue(waitQueue, {
+        durable: true,
+        arguments: {
+          'x-message-ttl': delayMs,
+          'x-dead-letter-exchange': '',
+          'x-dead-letter-routing-key': queue,
+        },
+      });
+      channel.sendToQueue(waitQueue, msg.content, {
         ...msg.properties,
-        headers: { ...headers, [ATTEMPTS_HEADER]: attempts + 1 },
+        headers: { ...headers, [ATTEMPTS_HEADER]: attempt },
       });
       channel.ack(msg);
       recordConsumerOutcome(consumerOf(queue), 'retried');

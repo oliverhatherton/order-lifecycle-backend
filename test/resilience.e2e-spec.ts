@@ -31,6 +31,10 @@ import {
 
 const gatewayMock = { authorize: jest.fn() };
 
+// Production backoff is 1s/2s/4s; 200ms keeps the same shape (200/400/800ms)
+// without slowing the suite.
+process.env.RABBITMQ_RETRY_BASE_DELAY_MS = '200';
+
 describe('Resilience (e2e)', () => {
   const ctx = setupE2eTest({
     entities: [
@@ -120,6 +124,13 @@ describe('Resilience (e2e)', () => {
 
     // 1 initial delivery + 3 retries.
     expect(gatewayMock.authorize).toHaveBeenCalledTimes(4);
+    // Each retry waited in its own backoff queue (200 → 400 → 800ms).
+    const channel = ctx.app.get(AmqpConnection).channel;
+    for (const delay of [200, 400, 800]) {
+      await expect(
+        channel.checkQueue(`payment.inventory_reserved.retry.${delay}ms`),
+      ).resolves.toMatchObject({ messageCount: 0 });
+    }
     // The order was reserved but never advanced past RESERVED.
     expect(await orderStatus(id)).toBe(OrderStatus.RESERVED);
   });
