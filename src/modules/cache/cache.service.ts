@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Redis } from 'ioredis';
-import { REDIS_CLIENT } from '@/modules/cache/redis.provider';
+import { CACHE_ENABLED, REDIS_CLIENT } from '@/modules/cache/redis.provider';
+import { recordCacheRequest } from '@/modules/metrics/metrics.collectors';
 
 export interface CacheClassStats {
   hits: number;
@@ -30,19 +31,29 @@ const withRate = (hits: number, misses: number): CacheClassStats => ({
  * a cache outage costs latency, never correctness or availability. Values are
  * stored as JSON; callers own key naming and any date rehydration.
  *
- * `get` records a per-key-class hit/miss counter, exposed via {@link getStats}
- * so the effectiveness of the cache is observable (Epic 5 surfaces it as a
- * metric).
+ * `get` records a per-key-class hit/miss counter, both in-process (exposed via
+ * {@link getStats}) and as the `cache_requests_total` Prometheus counter, so
+ * hit rate is observable per instance and across the fleet.
+ *
+ * When disabled (`CACHE_ENABLED=false`) every operation is a no-op and reads
+ * always miss without touching Redis or the counters — the "cache off" arm of
+ * the load-test A/B.
  */
 @Injectable()
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
   private readonly stats = new Map<string, { hits: number; misses: number }>();
 
-  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    @Optional()
+    @Inject(CACHE_ENABLED)
+    private readonly enabled: boolean = true,
+  ) {}
 
   /** Returns the cached value for `key`, or `undefined` on a miss or Redis error. */
   async get<T>(key: string): Promise<T | undefined> {
+    if (!this.enabled) return undefined;
     try {
       const raw = await this.redis.get(key);
       this.record(key, raw !== null);
@@ -58,6 +69,7 @@ export class CacheService {
 
   /** Stores `value` under `key` with a TTL (seconds). Errors are swallowed. */
   async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+    if (!this.enabled) return;
     try {
       await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
     } catch (error) {
@@ -86,11 +98,12 @@ export class CacheService {
     if (hit) counts.hits += 1;
     else counts.misses += 1;
     this.stats.set(cls, counts);
+    recordCacheRequest(cls, hit ? 'hit' : 'miss');
   }
 
   /** Removes one or more keys. Errors are swallowed. */
   async del(...keys: string[]): Promise<void> {
-    if (keys.length === 0) return;
+    if (!this.enabled || keys.length === 0) return;
     try {
       await this.redis.del(...keys);
     } catch (error) {

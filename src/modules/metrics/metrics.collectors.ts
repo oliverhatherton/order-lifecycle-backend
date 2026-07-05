@@ -48,6 +48,15 @@ export const outboxRelayedTotal = new Counter({
   help: 'Messages successfully relayed from the outbox table to the broker.',
 });
 
+/** A cache read either found the key or didn't (a Redis error counts as a miss). */
+export type CacheResult = 'hit' | 'miss';
+
+export const cacheRequestsTotal = new Counter({
+  name: 'cache_requests_total',
+  help: 'Cache-aside reads, by key class (prefix before the first ":") and result. Hit rate = hit / (hit + miss).',
+  labelNames: ['key_class', 'result'],
+});
+
 /**
  * Sink for durable metric history, set once at boot by
  * MetricsPersistenceService.onModuleInit. Optional by design: this module has
@@ -110,6 +119,17 @@ export function recordOutboxRelayed(count: number): void {
   if (count === 0) return;
   outboxRelayedTotal.inc(count);
   sink?.record('outbox_relayed', count);
+}
+
+/**
+ * Records one cache read. Prometheus-only — no durable history row, since a
+ * hot read path would otherwise write a metric_events row per request.
+ */
+export function recordCacheRequest(
+  keyClass: string,
+  result: CacheResult,
+): void {
+  cacheRequestsTotal.inc({ key_class: keyClass, result });
 }
 
 /** Times a database operation, recording its duration regardless of outcome. */

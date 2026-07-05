@@ -1,4 +1,5 @@
 import type { Redis } from 'ioredis';
+import { register } from 'prom-client';
 import { CacheService } from '@/modules/cache/cache.service';
 
 describe('CacheService', () => {
@@ -110,6 +111,55 @@ describe('CacheService', () => {
       });
 
       await expect(service.del('a')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('when disabled', () => {
+    it('never touches Redis: reads miss, writes and deletes are no-ops', async () => {
+      const redis = {
+        get: jest.fn(),
+        set: jest.fn(),
+        del: jest.fn(),
+      };
+      const service = new CacheService(redis as unknown as Redis, false);
+
+      await expect(service.get('order:1')).resolves.toBeUndefined();
+      await service.set('order:1', { a: 1 }, 30);
+      await service.del('order:1');
+
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(redis.set).not.toHaveBeenCalled();
+      expect(redis.del).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Prometheus export', () => {
+    async function counter(result: 'hit' | 'miss'): Promise<number> {
+      const metric = await register
+        .getSingleMetric('cache_requests_total')!
+        .get();
+      return (
+        metric.values.find(
+          (v) =>
+            v.labels.key_class === 'promtest' && v.labels.result === result,
+        )?.value ?? 0
+      );
+    }
+
+    it('counts hits and misses by key class on cache_requests_total', async () => {
+      const [hitsBefore, missesBefore] = [
+        await counter('hit'),
+        await counter('miss'),
+      ];
+      const service = build({
+        get: jest.fn().mockResolvedValueOnce('{}').mockResolvedValueOnce(null),
+      });
+
+      await service.get('promtest:1');
+      await service.get('promtest:2');
+
+      expect((await counter('hit')) - hitsBefore).toBe(1);
+      expect((await counter('miss')) - missesBefore).toBe(1);
     });
   });
 });

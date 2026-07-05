@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import { CacheService } from '@/modules/cache/cache.service';
-import { REDIS_CLIENT, redisProvider } from '@/modules/cache/redis.provider';
+import {
+  REDIS_CLIENT,
+  cacheEnabledProvider,
+  redisProvider,
+} from '@/modules/cache/redis.provider';
 
 /**
  * Owns the Redis connection and exposes CacheService application-wide. Global
@@ -15,7 +19,7 @@ import { REDIS_CLIENT, redisProvider } from '@/modules/cache/redis.provider';
  */
 @Global()
 @Module({
-  providers: [redisProvider, CacheService],
+  providers: [redisProvider, cacheEnabledProvider, CacheService],
   exports: [CacheService],
 })
 export class CacheModule implements OnApplicationShutdown {

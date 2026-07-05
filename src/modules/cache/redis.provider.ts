@@ -5,6 +5,16 @@ import { Redis } from 'ioredis';
 /** Injection token for the shared ioredis connection. */
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
+/** Injection token for the `redis.enabled` switch (see RedisConfig.enabled). */
+export const CACHE_ENABLED = Symbol('CACHE_ENABLED');
+
+export const cacheEnabledProvider: Provider = {
+  provide: CACHE_ENABLED,
+  inject: [ConfigService],
+  useFactory: (configService: ConfigService): boolean =>
+    configService.get<boolean>('redis.enabled') ?? true,
+};
+
 /**
  * Provides the singleton ioredis connection. `lazyConnect` keeps construction
  * non-blocking and `maxRetriesPerRequest: null` lets commands fail fast (caught
