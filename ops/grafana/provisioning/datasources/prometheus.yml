@@ -1,0 +1,10 @@
+# Provisioned on Grafana boot (docker compose --profile observability up).
+# The fixed uid is what the committed dashboards reference.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
