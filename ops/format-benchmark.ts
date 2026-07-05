@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 /**
- * Converts the JSON report written by ops/load-test.ts (LOAD_TEST_OUTPUT)
+ * Converts the JSON report written by ops/load-test.k6.js (LOAD_TEST_OUTPUT)
  * into the two flavours of the "customSmallerIsBetter" / "customBiggerIsBetter"
  * benchmark format that benchmark-action/github-action-benchmark expects
  * (https://github.com/benchmark-action/github-action-benchmark#examples) —

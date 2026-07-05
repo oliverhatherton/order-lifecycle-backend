@@ -85,7 +85,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     # Push-only: load numbers are noisy on shared PR runners and aren't a
-    # merge gate, just a recorded data point (see ops/load-test.ts).
+    # merge gate, just a recorded data point (see ops/load-test.k6.js).
     if: github.event_name == 'push'
     timeout-minutes: 10
     # contents: write lets benchmark-action/github-action-benchmark push the
@@ -175,6 +175,8 @@ jobs:
           REDIS_URL: redis://localhost:6379
           JWT_ACCESS_SECRET: ci-load-test-secret
         run: nohup node dist/main > app.log 2>&1 &
+
+      - uses: grafana/setup-k6-action@v1
 
       - name: Run load test
         env:
