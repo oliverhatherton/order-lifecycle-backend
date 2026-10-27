@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793136149002,
+  "lastUpdate": 1793136716540,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — latency": [
@@ -404,6 +404,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
             "value": 49.26,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "6439e4ee587dd04417ce73810baac3b3a8870693",
+          "message": "ci: run the synthetic traffic simulator intermittently against the demo API\n\nScheduled every 2h at an odd minute; ~1 in 4 slots are skipped at random and\neach run picks a random 8-20 minute length at 2-4 sessions/min, so the demo\ndashboards keep showing labelled synthetic activity without clockwork\npatterns. Wakes the sleeping Render instance first, never overlaps runs, and\ncan be triggered manually with an explicit length and rate. Target and\naccount password come from vars.SIM_BASE_URL / secrets.SIM_PASSWORD.",
+          "timestamp": "2026-10-27T21:29:00Z",
+          "tree_id": "f75b25ac348f2900d5aa26b6b6eed18299f472bf",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/6439e4ee587dd04417ce73810baac3b3a8870693"
+        },
+        "date": 1793136715882,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) p50",
+            "value": 35.45,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p90",
+            "value": 44.07,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p99",
+            "value": 69.18,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p50",
+            "value": 46.54,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p90",
+            "value": 55.38,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p99",
+            "value": 81.05,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p50",
+            "value": 37.28,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p90",
+            "value": 43.73,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p99",
+            "value": 64.37,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p50",
+            "value": 36.89,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p90",
+            "value": 45.26,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
+            "value": 71.96,
             "unit": "ms"
           }
         ]
