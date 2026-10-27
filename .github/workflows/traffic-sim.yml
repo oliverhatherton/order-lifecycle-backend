@@ -1,0 +1,108 @@
+name: Synthetic traffic
+
+# Intermittent, labelled synthetic shopper traffic against the deployed API
+# (ops/traffic-sim.k6.js), so the demo's Metrics page and history charts keep
+# showing the pipeline at work. Every request carries
+# `X-Traffic-Source: synthetic` and comes from sim-shopper-<n>@synthetic.example
+# accounts — it's simulated load, not usage.
+#
+# Runs are deliberately irregular: scheduled every 2h at an odd minute, ~1 in
+# 4 skipped at random, and each run picks a random length and pace. Kept light
+# because metric_events has no retention yet and Render's free Postgres is
+# capped at 1 GB — a run is roughly 20–80 sessions.
+#
+# Config (Settings → Secrets and variables → Actions):
+#   vars.SIM_BASE_URL     target API (defaults to the public demo API)
+#   secrets.SIM_PASSWORD  password for the synthetic accounts (falls back to the
+#                         script default, which is public — set this)
+#
+# Note: GitHub pauses scheduled workflows in a public repo after 60 days with
+# no commits; re-enable from the Actions tab if that happens.
+
+on:
+  schedule:
+    - cron: '23 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: Run length in minutes (blank = random 8–20)
+        required: false
+      sessions_per_min:
+        description: Shopper sessions started per minute (blank = random 2–4)
+        required: false
+
+# Never overlap: a run still going when the next fires makes the next wait
+# rather than doubling the traffic.
+concurrency:
+  group: traffic-sim
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    name: Simulate shoppers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SIM_BASE_URL: ${{ vars.SIM_BASE_URL || 'https://api.oliverhatherton.com/order-lifecycle' }}
+      SIM_PASSWORD: ${{ secrets.SIM_PASSWORD }}
+    steps:
+      - name: Decide this run's shape
+        id: shape
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_DURATION: ${{ inputs.duration_minutes }}
+          INPUT_RATE: ${{ inputs.sessions_per_min }}
+        run: |
+          # Scheduled runs skip ~25% of the time so activity isn't clockwork;
+          # a manual run always goes ahead.
+          if [ "$EVENT" = "schedule" ] && [ $((RANDOM % 4)) -eq 0 ]; then
+            echo "Skipping this slot at random."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          duration="${INPUT_DURATION:-$((8 + RANDOM % 13))}"
+          rate="${INPUT_RATE:-$((2 + RANDOM % 3))}"
+          {
+            echo "duration=${duration}m"
+            echo "rate=${rate}"
+            echo "skip=false"
+          } >> "$GITHUB_OUTPUT"
+          echo "Running ${rate} sessions/min for ${duration}m against ${SIM_BASE_URL}"
+
+      - uses: actions/checkout@v4
+        if: steps.shape.outputs.skip != 'true'
+
+      - name: Wake the API
+        if: steps.shape.outputs.skip != 'true'
+        # Render's free tier sleeps when idle; the first request can take ~1 min.
+        run: |
+          for attempt in $(seq 1 18); do
+            if curl -sf --max-time 20 "${SIM_BASE_URL}/health" > /dev/null; then
+              echo "API is up (attempt ${attempt})."
+              exit 0
+            fi
+            echo "Not up yet (attempt ${attempt}); retrying in 10s…"
+            sleep 10
+          done
+          echo "::error::${SIM_BASE_URL}/health never answered"
+          exit 1
+
+      - uses: grafana/setup-k6-action@v1
+        if: steps.shape.outputs.skip != 'true'
+
+      - name: Run traffic simulator
+        if: steps.shape.outputs.skip != 'true'
+        env:
+          SIM_DURATION: ${{ steps.shape.outputs.duration }}
+          SIM_SESSIONS_PER_MIN: ${{ steps.shape.outputs.rate }}
+        run: |
+          # An unset secret arrives as an empty string; let the script fall
+          # back to its default rather than registering with a blank password.
+          if [ -z "$SIM_PASSWORD" ]; then
+            echo "::warning::secrets.SIM_PASSWORD is not set; using the script's public default password."
+            unset SIM_PASSWORD
+          fi
+          k6 run ops/traffic-sim.k6.js
