@@ -17,11 +17,16 @@ import { CartItemEntity } from '@/entities/cart/CartItemEntity';
  * pattern as OrderEntity.paymentInitiatedAt): a cart can only be checked out
  * while it's NULL, and the atomic claim UPDATE in CartService.checkout means
  * a cart can never be checked out twice, even under a concurrent double
- * click. A user has at most one *open* cart at a time — CartService creates
- * one lazily on first use; once checked out, the next cart action starts a
- * fresh one, so a cart is single-use by construction.
+ * click. A user has at most one *open* cart at a time — enforced by a
+ * partial unique index, so two concurrent first requests can't each create
+ * one (CartService re-reads the winner's cart). Once checked out, the next
+ * cart action starts a fresh one, so a cart is single-use by construction.
  */
 @Entity('carts')
+@Index('UQ_carts_open_per_user', ['userId'], {
+  unique: true,
+  where: '"checkedOutAt" IS NULL',
+})
 export class CartEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, QueryFailedError, Repository } from 'typeorm';
 import { CartEntity } from '@/entities/cart/CartEntity';
 import { CartItemEntity } from '@/entities/cart/CartItemEntity';
 import { OrderEntity } from '@/entities/order/OrderEntity';
@@ -28,17 +28,32 @@ export class CartService {
    * that's enough to make "checked out once" hold without extra state.
    */
   async getOpenCart(userId: string): Promise<CartEntity> {
-    const existing = await this.cartRepository.findOne({
+    const existing = await this.findOpenCart(userId);
+    if (existing) return existing;
+
+    try {
+      const created = await this.cartRepository.save(
+        this.cartRepository.create({ userId }),
+      );
+      created.items = [];
+      return created;
+    } catch (error) {
+      // A concurrent request (e.g. two quick taps on different products)
+      // created the open cart first and the one-open-cart index rejected
+      // ours — use theirs.
+      if (isUniqueViolation(error)) {
+        const winner = await this.findOpenCart(userId);
+        if (winner) return winner;
+      }
+      throw error;
+    }
+  }
+
+  private findOpenCart(userId: string): Promise<CartEntity | null> {
+    return this.cartRepository.findOne({
       where: { userId, checkedOutAt: IsNull() },
       relations: { items: { product: true } },
     });
-    if (existing) return existing;
-
-    const created = await this.cartRepository.save(
-      this.cartRepository.create({ userId }),
-    );
-    created.items = [];
-    return created;
   }
 
   /** Upserts a line item's quantity (sets it, doesn't add to it). */
@@ -101,4 +116,11 @@ export class CartService {
     }));
     return this.orders.createOrder(userId, lines);
   }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof QueryFailedError &&
+    (error.driverError as { code?: string }).code === '23505'
+  );
 }

@@ -45,6 +45,34 @@ describe('Cart (e2e)', () => {
     rabbitmq: true,
   });
 
+  it('concurrent first writes land in one open cart (no duplicate carts)', async () => {
+    const token = await registerAndLogin(ctx.app);
+    const [a, b] = [
+      await createProduct(ctx.dataSource),
+      await createProduct(ctx.dataSource),
+    ];
+
+    await Promise.all(
+      [a, b].map((productId) =>
+        request(ctx.app.getHttpServer())
+          .post('/cart/items')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ productId, quantity: 1 })
+          .expect(200),
+      ),
+    );
+
+    const openCarts: unknown[] = await ctx.dataSource.query(
+      `SELECT id FROM "carts" WHERE "checkedOutAt" IS NULL`,
+    );
+    expect(openCarts).toHaveLength(1);
+    const cart = await request(ctx.app.getHttpServer())
+      .get('/cart')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect((cart.body as CartResponseDTO).items).toHaveLength(2);
+  });
+
   describe('GET /cart', () => {
     it('lazily creates an empty cart for a caller with none yet', async () => {
       const token = await registerAndLogin(ctx.app);
