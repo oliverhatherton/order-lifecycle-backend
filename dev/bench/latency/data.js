@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793132184231,
+  "lastUpdate": 1793135691334,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — latency": [
@@ -236,6 +236,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
             "value": 59.55,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "ab74a526bbda3b645215d263addd3ae3790db89c",
+          "message": "feat: export order pipeline, queue, outbox and payment metrics\n\nNew Prometheus series for the questions the existing counters couldn't\nanswer:\n- orders_in_status{status}: live orders per status, read from the DB\n- orders_created_total, order_failures_total{reason}\n- order_stage_duration_seconds{stage}: reservation, payment, completion and\n  Pay -> COMPLETED fulfilment latency\n- payment_authorizations_total{outcome}: authorized, declined,\n  deduplicated, in_flight, takeover\n- rabbitmq_queue_messages / rabbitmq_queue_consumers{queue} for every work\n  queue and the DLQ, plus outbox_pending_messages and\n  outbox_oldest_pending_age_seconds\n\nGauges are served by LiveGaugesService on each scrape (snapshot cached 2s,\ndedicated AMQP channel for checkQueue, degrades to omitting a gauge rather\nthan failing the scrape). Consumer queue names move to shared constants so\nthe gauges check exactly what the consumers declare. Adds Grafana pipeline\npanels and PromQL docs for the new series.",
+          "timestamp": "2026-10-27T21:10:03Z",
+          "tree_id": "66fea4d76969ea3fd3c7c5f8abceee1c3186f761",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/ab74a526bbda3b645215d263addd3ae3790db89c"
+        },
+        "date": 1793135690765,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) p50",
+            "value": 36.17,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p90",
+            "value": 45.09,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p99",
+            "value": 75.18,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p50",
+            "value": 49.28,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p90",
+            "value": 54.79,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p99",
+            "value": 78.37,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p50",
+            "value": 38.98,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p90",
+            "value": 47.36,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p99",
+            "value": 67.13,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p50",
+            "value": 38.65,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p90",
+            "value": 48.84,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
+            "value": 63.59,
             "unit": "ms"
           }
         ]
