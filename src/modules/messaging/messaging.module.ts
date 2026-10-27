@@ -8,6 +8,7 @@ import { EventPublisher } from '@/modules/messaging/event-publisher';
 import { InboxService } from '@/modules/messaging/inbox/inbox.service';
 import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { OutboxRelayService } from '@/modules/messaging/outbox/outbox-relay.service';
+import { OutboxCommitSubscriber } from '@/modules/messaging/outbox/outbox-commit.subscriber';
 import {
   ORDER_DLQ,
   ORDER_DLX,
@@ -48,7 +49,13 @@ import {
       }),
     }),
   ],
-  providers: [EventPublisher, InboxService, OutboxService, OutboxRelayService],
+  providers: [
+    EventPublisher,
+    InboxService,
+    OutboxService,
+    OutboxRelayService,
+    OutboxCommitSubscriber,
+  ],
   exports: [RabbitMQModule, InboxService, OutboxService],
 })
 export class MessagingModule {}

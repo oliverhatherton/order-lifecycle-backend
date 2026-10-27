@@ -14,8 +14,9 @@ const RELAY_BATCH_SIZE = 50;
 /**
  * The other half of the outbox pattern: OutboxService durably records an
  * event inside the caller's own transaction; this drains that table to the
- * broker on a timer, independent of whatever request or consumer wrote the
- * row. A message only ever leaves this table once `amqp.publish` actually
+ * broker — immediately when OutboxCommitSubscriber nudges it after a commit,
+ * and on a 1s timer as the safety net, independent of whatever request or
+ * consumer wrote the row. A message only ever leaves this table once `amqp.publish` actually
  * succeeds — a broker outage just means rows pile up unpublished until it
  * recovers, instead of the event being silently lost.
  *
@@ -30,29 +31,50 @@ const RELAY_BATCH_SIZE = 50;
 export class OutboxRelayService {
   private readonly logger = new Logger(OutboxRelayService.name);
   private draining = false;
+  private drainAgain = false;
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly publisher: EventPublisher,
   ) {}
 
+  /**
+   * Drain now rather than at the next poll — called by OutboxCommitSubscriber
+   * when a transaction that wrote outbox rows commits. If a drain is already
+   * running, one more is queued for when it finishes, so a row committed
+   * mid-drain (after that drain's SELECT) is never left for the poll.
+   */
+  nudge(): void {
+    if (this.draining) {
+      this.drainAgain = true;
+      return;
+    }
+    setImmediate(() => void this.relay());
+  }
+
   @Interval(RELAY_POLL_INTERVAL_MS)
   async relay(): Promise<void> {
-    // A tick that's still draining a large backlog skips the next timer fire
-    // rather than overlapping it — SKIP LOCKED makes overlap safe, but there
-    // is no value running two ticks against the same small batch size.
+    // A tick that's still draining skips the next timer fire rather than
+    // overlapping it — SKIP LOCKED makes overlap safe, but there is no value
+    // running two drains against the same small batch size.
     if (this.draining) return;
     this.draining = true;
     try {
-      await this.drainOnce();
+      // Keep going while full batches come back (a backlog after an outage).
+      while ((await this.drainOnce()) === RELAY_BATCH_SIZE);
     } catch (error) {
       this.logger.error('Outbox relay tick failed', error as Error);
     } finally {
       this.draining = false;
     }
+    if (this.drainAgain) {
+      this.drainAgain = false;
+      setImmediate(() => void this.relay());
+    }
   }
 
-  private async drainOnce(): Promise<void> {
+  /** Publishes one batch; returns how many rows were claimed. */
+  private async drainOnce(): Promise<number> {
     const relayed = await this.dataSource.transaction(async (manager) => {
       // Holding these row locks for the duration of the AMQP calls below is
       // a deliberate simplification — it bounds a tick to RELAY_BATCH_SIZE
@@ -92,12 +114,13 @@ export class OutboxRelayService {
           publishedAt: new Date(),
         });
       }
-      return published.length;
+      return { published: published.length, claimed: batch.length };
     });
 
-    if (relayed > 0) {
-      recordOutboxRelayed(relayed);
-      this.logger.log(`Relayed ${relayed} outbox message(s)`);
+    if (relayed.published > 0) {
+      recordOutboxRelayed(relayed.published);
+      this.logger.log(`Relayed ${relayed.published} outbox message(s)`);
     }
+    return relayed.claimed;
   }
 }

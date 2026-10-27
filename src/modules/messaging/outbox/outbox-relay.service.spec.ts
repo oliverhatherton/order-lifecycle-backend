@@ -141,4 +141,52 @@ describe('OutboxRelayService', () => {
     // Only the first tick's transaction ran; the overlapping second was a no-op.
     expect(dataSourceMock.transaction).toHaveBeenCalledTimes(1);
   });
+
+  describe('nudge', () => {
+    it('drains right away instead of waiting for the next poll', async () => {
+      queryBuilderMock.getMany.mockResolvedValue([row()]);
+      publisherMock.publish.mockResolvedValue(undefined);
+
+      service.nudge();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(publisherMock.publish).toHaveBeenCalledTimes(1);
+    });
+
+    it('queues exactly one more drain when nudged mid-drain', async () => {
+      let release: () => void = () => undefined;
+      queryBuilderMock.getMany
+        .mockImplementationOnce(
+          () => new Promise((resolve) => (release = () => resolve([row()]))),
+        )
+        .mockResolvedValue([]);
+      publisherMock.publish.mockResolvedValue(undefined);
+
+      const first = service.relay();
+      service.nudge();
+      service.nudge(); // coalesced with the one above
+      release();
+      await first;
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queryBuilderMock.getMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps draining while full batches come back', async () => {
+      const full = Array.from({ length: 50 }, (_, i) =>
+        row({ id: `msg-${i}` }),
+      );
+      queryBuilderMock.getMany
+        .mockResolvedValueOnce(full)
+        .mockResolvedValueOnce([row({ id: 'last' })]);
+      publisherMock.publish.mockResolvedValue(undefined);
+
+      await service.relay();
+
+      expect(queryBuilderMock.getMany).toHaveBeenCalledTimes(2);
+      expect(publisherMock.publish).toHaveBeenCalledTimes(51);
+    });
+  });
 });
