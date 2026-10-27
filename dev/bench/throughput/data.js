@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793142468012,
+  "lastUpdate": 1793142968437,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — throughput": [
@@ -346,6 +346,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
             "value": 874.3,
+            "unit": "req/sec"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "e99c489ac4b77d83433ca23ccee18f6bcbb7569b",
+          "message": "add optimistic cart writes so UI can pass in end quantity on debounce instead of request per add",
+          "timestamp": "2026-10-27T23:12:04Z",
+          "tree_id": "75277e44781c6ac1b58c63be85d722992433e118",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/e99c489ac4b77d83433ca23ccee18f6bcbb7569b"
+        },
+        "date": 1793142967843,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) req/sec",
+            "value": 607.6,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) req/sec",
+            "value": 426.5,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) req/sec",
+            "value": 559.3,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
+            "value": 583.6,
             "unit": "req/sec"
           }
         ]
