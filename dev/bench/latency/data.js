@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793135691334,
+  "lastUpdate": 1793136149002,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — latency": [
@@ -320,6 +320,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
             "value": 63.59,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "ff91d8948a0895df94da18bba868eb7fb6708136",
+          "message": "feat: add labelled synthetic shopper traffic simulator for demo dashboards\n\nops/traffic-sim.k6.js (pnpm traffic:sim) paces realistic sessions — login,\nbrowse, cart, checkout, wait for RESERVED, then pay (85%) or cancel (15%) and\npoll until the order settles — so the Metrics page and Grafana show the\npipeline working. Every request is marked X-Traffic-Source: synthetic with\na traffic-sim User-Agent, from sim-shopper-<n>@synthetic.example accounts;\neach VU is pinned to its own shopper so concurrent sessions never share a\ncart. Rate, duration, pool size and target are env-configurable.",
+          "timestamp": "2026-10-27T21:19:40Z",
+          "tree_id": "3e022de50a13712b876e178323f796ccae6112ad",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/ff91d8948a0895df94da18bba868eb7fb6708136"
+        },
+        "date": 1793136148794,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) p50",
+            "value": 23.96,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p90",
+            "value": 29.6,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p99",
+            "value": 43.99,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p50",
+            "value": 35.34,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p90",
+            "value": 44.07,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p99",
+            "value": 173.77,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p50",
+            "value": 26.84,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p90",
+            "value": 32.21,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p99",
+            "value": 45.71,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p50",
+            "value": 26.61,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p90",
+            "value": 31.81,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
+            "value": 49.26,
             "unit": "ms"
           }
         ]
