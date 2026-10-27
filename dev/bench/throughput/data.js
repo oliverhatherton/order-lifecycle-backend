@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793132179457,
+  "lastUpdate": 1793135689169,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — throughput": [
@@ -126,6 +126,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
             "value": 576.9,
+            "unit": "req/sec"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "ab74a526bbda3b645215d263addd3ae3790db89c",
+          "message": "feat: export order pipeline, queue, outbox and payment metrics\n\nNew Prometheus series for the questions the existing counters couldn't\nanswer:\n- orders_in_status{status}: live orders per status, read from the DB\n- orders_created_total, order_failures_total{reason}\n- order_stage_duration_seconds{stage}: reservation, payment, completion and\n  Pay -> COMPLETED fulfilment latency\n- payment_authorizations_total{outcome}: authorized, declined,\n  deduplicated, in_flight, takeover\n- rabbitmq_queue_messages / rabbitmq_queue_consumers{queue} for every work\n  queue and the DLQ, plus outbox_pending_messages and\n  outbox_oldest_pending_age_seconds\n\nGauges are served by LiveGaugesService on each scrape (snapshot cached 2s,\ndedicated AMQP channel for checkQueue, degrades to omitting a gauge rather\nthan failing the scrape). Consumer queue names move to shared constants so\nthe gauges check exactly what the consumers declare. Adds Grafana pipeline\npanels and PromQL docs for the new series.",
+          "timestamp": "2026-10-27T21:10:03Z",
+          "tree_id": "66fea4d76969ea3fd3c7c5f8abceee1c3186f761",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/ab74a526bbda3b645215d263addd3ae3790db89c"
+        },
+        "date": 1793135688347,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) req/sec",
+            "value": 564.6,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) req/sec",
+            "value": 416,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) req/sec",
+            "value": 530.1,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
+            "value": 531.7,
             "unit": "req/sec"
           }
         ]
