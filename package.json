@@ -32,6 +32,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:load": "k6 run ops/load-test.k6.js",
     "load:cache-ab": "bash ops/cache-ab.sh",
+    "traffic:sim": "k6 run ops/traffic-sim.k6.js",
     "load:format-benchmark": "ts-node -r tsconfig-paths/register ops/format-benchmark.ts"
   },
   "dependencies": {

@@ -65,6 +65,7 @@ pnpm test          # unit tests
 pnpm test:e2e       # e2e — spins up real Postgres/RabbitMQ/Redis via Testcontainers
 pnpm test:load      # k6 load test against a running instance (needs k6 installed)
 pnpm load:cache-ab  # k6 A/B: cache on vs CACHE_ENABLED=false, medians over 3 rounds
+pnpm traffic:sim    # paced synthetic shoppers (labelled X-Traffic-Source: synthetic) for demo dashboards
 ```
 
 90+ e2e tests and 30+ unit suites run automatically on every push via
