@@ -16,6 +16,8 @@ describe('SeedService', () => {
   const productsMock = {
     find: jest.fn(),
     insert: jest.fn(),
+    update: jest.fn().mockResolvedValue({ affected: 0 }),
+    manager: { query: jest.fn() },
   };
 
   beforeEach(async () => {
@@ -69,5 +71,49 @@ describe('SeedService', () => {
 
     expect(usersMock.save).not.toHaveBeenCalled();
     expect(productsMock.insert).not.toHaveBeenCalled();
+  });
+
+  it('seeds a motorsport catalog with unique SKUs', async () => {
+    usersMock.findOneBy.mockResolvedValue({ id: 'admin-1' });
+    productsMock.find.mockResolvedValue([]);
+
+    await service.onApplicationBootstrap();
+
+    const [inserted] = productsMock.insert.mock.calls[0] as [
+      Array<{ sku: string; name: string; stock: number }>,
+    ];
+    expect(new Set(inserted.map((p) => p.sku)).size).toBe(inserted.length);
+    expect(inserted.map((p) => p.name)).toContain(
+      'Carbon Race Helmet, FIA 8859',
+    );
+    expect(inserted.every((p) => p.stock > 0)).toBe(true);
+  });
+
+  it('retires the old placeholder SKUs and clears them from open carts', async () => {
+    usersMock.findOneBy.mockResolvedValue({ id: 'admin-1' });
+    productsMock.find.mockResolvedValue([]);
+    productsMock.update.mockResolvedValueOnce({ affected: 12 });
+
+    await service.onApplicationBootstrap();
+
+    const [criteria, change] = productsMock.update.mock.calls[0] as [
+      { sku: { _value: string[] }; active: boolean },
+      { active: boolean },
+    ];
+    expect(criteria.sku._value).toContain('WIDGET-001');
+    expect(criteria.active).toBe(true);
+    expect(change).toEqual({ active: false });
+    expect(productsMock.manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM "cart_items"'),
+    );
+  });
+
+  it('leaves carts alone when nothing needed retiring', async () => {
+    usersMock.findOneBy.mockResolvedValue({ id: 'admin-1' });
+    productsMock.find.mockResolvedValue([]);
+
+    await service.onApplicationBootstrap();
+
+    expect(productsMock.manager.query).not.toHaveBeenCalled();
   });
 });

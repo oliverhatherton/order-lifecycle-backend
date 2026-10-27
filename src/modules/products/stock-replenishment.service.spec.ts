@@ -9,6 +9,7 @@ describe('StockReplenishmentService', () => {
 
   const queryBuilderMock = {
     where: jest.fn(),
+    andWhere: jest.fn(),
     getMany: jest.fn(),
     update: jest.fn(),
     set: jest.fn(),
@@ -22,6 +23,7 @@ describe('StockReplenishmentService', () => {
 
   beforeEach(async () => {
     queryBuilderMock.where.mockReturnValue(queryBuilderMock);
+    queryBuilderMock.andWhere.mockReturnValue(queryBuilderMock);
     queryBuilderMock.update.mockReturnValue(queryBuilderMock);
     queryBuilderMock.set.mockReturnValue(queryBuilderMock);
     queryBuilderMock.setParameter.mockReturnValue(queryBuilderMock);

@@ -36,6 +36,7 @@ export class StockReplenishmentService {
     const lowStock = await this.repository
       .createQueryBuilder('product')
       .where('product.stock <= :threshold', { threshold: LOW_STOCK_THRESHOLD })
+      .andWhere('product.active = true')
       .getMany();
 
     for (const product of lowStock) {

@@ -129,10 +129,11 @@ describe('ProductsService', () => {
   });
 
   describe('list / findByIds', () => {
-    it('lists products alphabetically', async () => {
+    it('lists only products on sale, alphabetically', async () => {
       repositoryMock.find.mockResolvedValue([]);
       await service.list();
       expect(repositoryMock.find).toHaveBeenCalledWith({
+        where: { active: true },
         order: { name: 'ASC' },
       });
     });

@@ -23,9 +23,12 @@ export class ProductsService {
     private readonly repository: Repository<ProductEntity>,
   ) {}
 
-  /** The catalog, alphabetical — what the UI's "add to cart" screen lists. */
+  /** The catalog on sale, alphabetical — what the UI's "add to cart" screen lists. */
   list(): Promise<ProductEntity[]> {
-    return this.repository.find({ order: { name: 'ASC' } });
+    return this.repository.find({
+      where: { active: true },
+      order: { name: 'ASC' },
+    });
   }
 
   findByIds(ids: string[]): Promise<ProductEntity[]> {
@@ -33,6 +36,7 @@ export class ProductsService {
     return this.repository
       .createQueryBuilder('product')
       .where('product.id IN (:...ids)', { ids })
+      .andWhere('product.active = true')
       .getMany();
   }
 
