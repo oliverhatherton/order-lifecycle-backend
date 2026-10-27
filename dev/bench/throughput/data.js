@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793136712530,
+  "lastUpdate": 1793140684784,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — throughput": [
@@ -258,6 +258,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
             "value": 555.2,
+            "unit": "req/sec"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "00205f833c5a9fb8867a5a5b091fc8865011138f",
+          "message": "feat: motorsport shop catalog; retire the placeholder products\n\nSeeds 18 motorsport products (driver kit, car parts, track-day gear) with\nbelievable stock levels. The old widget SKUs are retired rather than\ndeleted, since past order items reference them: a new products.active\ncolumn (with migration) hides them from the shop, the cart and stock\nreplenishment, and the seeder clears them from any open cart.",
+          "timestamp": "2026-10-27T22:35:27Z",
+          "tree_id": "eaab0b45f5207c07668a30609cb8f6c6c1c6c563",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/00205f833c5a9fb8867a5a5b091fc8865011138f"
+        },
+        "date": 1793140684187,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) req/sec",
+            "value": 650.3,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) req/sec",
+            "value": 443,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) req/sec",
+            "value": 586.3,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
+            "value": 622.5,
             "unit": "req/sec"
           }
         ]
