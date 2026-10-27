@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783037887674,
+  "lastUpdate": 1793131673499,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — throughput": [
@@ -38,6 +38,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders (authenticated, cache-aside) req/sec",
             "value": 588.4,
+            "unit": "req/sec"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "1db173e2687b1721aaebc731d512698f85859b24",
+          "message": "feat: replace autocannon load test with k6 and add cache on/off A/B\n\nops/load-test.k6.js seeds real completed orders through the full pipeline,\nthen load-tests /health, /products, /orders and /orders/:id, writing the same\nreport shape so the CI benchmark trends continue. pnpm load:cache-ab runs\nalternating cache-on/off rounds against fresh app processes and reports\nmedians. CI installs k6 via grafana/setup-k6-action. The compose Postgres\nhost port is now overridable (POSTGRES_HOST_PORT).",
+          "timestamp": "2026-10-27T20:04:48Z",
+          "tree_id": "f5879274467d7f9cee73d99e6b0091738c2576b3",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/1db173e2687b1721aaebc731d512698f85859b24"
+        },
+        "date": 1793131672655,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) req/sec",
+            "value": 1204.8,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) req/sec",
+            "value": 705.1,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) req/sec",
+            "value": 1149.5,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
+            "value": 1162.2,
             "unit": "req/sec"
           }
         ]
