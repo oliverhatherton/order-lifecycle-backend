@@ -10,6 +10,7 @@ import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
+  ConsumerQueue,
   ORDER_DLX,
   ORDER_EXCHANGE,
   OrderRoutingKey,
@@ -36,9 +37,9 @@ export class OrderCompletionConsumer {
   @RabbitSubscribe({
     exchange: ORDER_EXCHANGE,
     routingKey: OrderRoutingKey.PaymentProcessed,
-    queue: 'completion.payment_processed',
+    queue: ConsumerQueue.Completion,
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
-    errorHandler: createRetryErrorHandler('completion.payment_processed'),
+    errorHandler: createRetryErrorHandler(ConsumerQueue.Completion),
   })
   onPaymentProcessed(
     event: PaymentProcessedEvent,

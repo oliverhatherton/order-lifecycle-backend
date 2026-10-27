@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { PaymentAuthorizationEntity } from '@/entities/payment-authorization/PaymentAuthorizationEntity';
 import type { InventoryReservedEvent } from '@/modules/messaging/events/order-events';
+import { recordPaymentOutcome } from '@/modules/metrics/metrics.collectors';
 
 /** Outcome of a payment authorisation attempt. */
 export interface PaymentResult {
@@ -76,17 +77,21 @@ export class PaymentGateway {
         this.logger.log(
           `Reusing stored authorization for order ${orderId} (idempotent)`,
         );
+        recordPaymentOutcome('deduplicated');
         return toResult(existing);
       }
       if (!(await this.isClaimStale(orderId))) {
+        recordPaymentOutcome('in_flight');
         throw new PaymentInFlightError(orderId);
       }
+      recordPaymentOutcome('takeover');
       this.logger.warn(
         `Taking over stale payment claim for order ${orderId}; re-calling provider with the same idempotency key`,
       );
     }
 
     const result = await this.charge(event, orderId);
+    recordPaymentOutcome(result.authorized ? 'authorized' : 'declined');
     await this.authorizations.update(
       { orderId, authorized: IsNull() },
       {

@@ -9,11 +9,13 @@ import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler
 import { runWithCorrelationId } from '@/common/correlation/correlation';
 import {
   recordConsumerOutcome,
+  recordOrderFailure,
   startConsumerTimer,
 } from '@/modules/metrics/metrics.collectors';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import { PaymentGateway } from '@/modules/payment/payment.gateway';
 import {
+  ConsumerQueue,
   ORDER_DLX,
   ORDER_EXCHANGE,
   OrderRoutingKey,
@@ -42,9 +44,9 @@ export class PaymentConsumer {
   @RabbitSubscribe({
     exchange: ORDER_EXCHANGE,
     routingKey: OrderRoutingKey.InventoryReserved,
-    queue: 'payment.inventory_reserved',
+    queue: ConsumerQueue.Payment,
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
-    errorHandler: createRetryErrorHandler('payment.inventory_reserved'),
+    errorHandler: createRetryErrorHandler(ConsumerQueue.Payment),
   })
   onInventoryReserved(
     event: InventoryReservedEvent,
@@ -125,6 +127,7 @@ export class PaymentConsumer {
       }
 
       recordConsumerOutcome(CONSUMER, 'processed');
+      if (!result.authorized) recordOrderFailure(declineReason);
       this.logger.log(
         result.authorized
           ? `Payment processed for order ${event.orderId}`

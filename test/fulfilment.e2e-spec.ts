@@ -1,5 +1,6 @@
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import request from 'supertest';
+import { register } from 'prom-client';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { OrdersModule } from '@/modules/orders/orders.module';
 import { InventoryModule } from '@/modules/inventory/inventory.module';
@@ -150,9 +151,36 @@ describe('Order fulfilment chain (e2e)', () => {
     await waitFor(async () => (await emailReactions()) === 1, {
       timeoutMs: 5000,
     });
+
+    // Every stage of the pipeline was timed for this order.
+    const stages = await register
+      .getSingleMetric('order_stage_duration_seconds')!
+      .get();
+    for (const stage of [
+      'reservation',
+      'payment',
+      'completion',
+      'fulfilment',
+    ]) {
+      const count = stages.values.find(
+        (v) =>
+          v.labels.stage === stage &&
+          (v as { metricName?: string }).metricName ===
+            'order_stage_duration_seconds_count',
+      );
+      expect(count?.value).toBeGreaterThanOrEqual(1);
+    }
   });
 
+  async function failuresFor(reason: string): Promise<number> {
+    const metric = await register
+      .getSingleMetric('order_failures_total')!
+      .get();
+    return metric.values.find((v) => v.labels.reason === reason)?.value ?? 0;
+  }
+
   it('notifies on a failed order (decline → FAILED → OrderFailed → email)', async () => {
+    const failuresBefore = await failuresFor('card_declined');
     gatewayMock.authorize.mockResolvedValue({
       authorized: false,
       declineReason: 'card_declined',
@@ -172,5 +200,7 @@ describe('Order fulfilment chain (e2e)', () => {
     await waitFor(async () => (await emailReactions()) === 1, {
       timeoutMs: 5000,
     });
+    // The decline is counted under its reason, once.
+    expect((await failuresFor('card_declined')) - failuresBefore).toBe(1);
   });
 });

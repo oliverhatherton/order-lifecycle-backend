@@ -12,6 +12,7 @@ import { MetricsHistoryController } from '@/modules/metrics/metrics-history.cont
 import { MetricsHistoryService } from '@/modules/metrics/metrics-history.service';
 import { MetricsPersistenceService } from '@/modules/metrics/metrics-persistence.service';
 import { SystemMetricsSamplerService } from '@/modules/metrics/system-metrics-sampler.service';
+import { LiveGaugesService } from '@/modules/metrics/live-gauges.service';
 import { HTTP_REQUEST_DURATION_SECONDS } from '@/modules/metrics/metrics.constants';
 import { DURATION_BUCKETS } from '@/modules/metrics/metrics.collectors';
 
@@ -21,7 +22,9 @@ import { DURATION_BUCKETS } from '@/modules/metrics/metrics.collectors';
  * `GET /metrics/history` (MetricsPersistenceService mirrors every collector
  * call into `metric_events`; SystemMetricsSamplerService adds interval-sampled
  * system gauges so history is continuous across the whole uptime;
- * MetricsHistoryController/Service serve it back bucketed by resolution).
+ * MetricsHistoryController/Service serve it back bucketed by resolution;
+ * LiveGaugesService backs the point-in-time gauges — orders by status, outbox
+ * backlog, queue depth — read on each scrape).
  * Registered once in AppModule; the interceptor is wired via APP_INTERCEPTOR
  * so it can inject the histogram by DI.
  */
@@ -45,6 +48,7 @@ import { DURATION_BUCKETS } from '@/modules/metrics/metrics.collectors';
     MetricsPersistenceService,
     MetricsHistoryService,
     SystemMetricsSamplerService,
+    LiveGaugesService,
   ],
 })
 export class MetricsModule {}

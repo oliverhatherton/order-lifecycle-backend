@@ -17,6 +17,8 @@ import {
 import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { CacheService } from '@/modules/cache/cache.service';
 import {
+  recordOrderCreated,
+  recordOrderStage,
   recordTerminalState,
   timeDb,
 } from '@/modules/metrics/metrics.collectors';
@@ -104,6 +106,7 @@ export class OrdersService {
       }),
     );
     this.logger.log(`Created order ${order.id} for user ${userId}`);
+    recordOrderCreated();
 
     // The new order changes the owner's list, so drop its cached copy.
     await this.cache.del(userOrdersKey(userId));
@@ -236,6 +239,7 @@ export class OrdersService {
     if (terminalLabel) {
       recordTerminalState(terminalLabel);
     }
+    recordStageTimings(order, from, to);
 
     // Belt-and-braces: non-terminal orders are never cached in the first
     // place (see getOrderForUser), so this mainly matters the instant an
@@ -362,6 +366,39 @@ export class OrdersService {
 
     order.status = OrderStatus.CANCELLED;
     return order;
+  }
+}
+
+/**
+ * Times the pipeline stage a transition just closed (see OrderStage), from
+ * the order as read *before* the transition — `updatedAt` is still the moment
+ * it entered `from`. Recorded when the transition is applied, which inside a
+ * consumer is just before its transaction commits; a rollback after that
+ * point is rare enough (the guarded UPDATE has already succeeded) to accept.
+ *
+ * createdAt/updatedAt are tz-naive `timestamp` columns, so these durations
+ * assume the app and the DB share a timezone (UTC in every deployed env);
+ * paymentInitiatedAt is timestamptz and always exact.
+ */
+function recordStageTimings(
+  order: OrderEntity,
+  from: OrderStatus,
+  to: OrderStatus,
+): void {
+  const now = Date.now();
+  const since = (date: Date | null | undefined): number | undefined =>
+    date ? (now - new Date(date).getTime()) / 1000 : undefined;
+  const paidClick = since(order.paymentInitiatedAt);
+
+  if (from === OrderStatus.PENDING) {
+    const seconds = since(order.createdAt);
+    if (seconds !== undefined) recordOrderStage('reservation', seconds);
+  } else if (from === OrderStatus.RESERVED && paidClick !== undefined) {
+    recordOrderStage('payment', paidClick);
+  } else if (from === OrderStatus.PAID && to === OrderStatus.COMPLETED) {
+    const seconds = since(order.updatedAt);
+    if (seconds !== undefined) recordOrderStage('completion', seconds);
+    if (paidClick !== undefined) recordOrderStage('fulfilment', paidClick);
   }
 }
 

@@ -7,6 +7,7 @@ import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler
 import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
 import {
+  ConsumerQueue,
   ORDER_DLX,
   ORDER_EXCHANGE,
   OrderRoutingKey,
@@ -31,9 +32,9 @@ export class EmailConsumer {
   @RabbitSubscribe({
     exchange: ORDER_EXCHANGE,
     routingKey: [OrderRoutingKey.Completed, OrderRoutingKey.Failed],
-    queue: 'email.notifications',
+    queue: ConsumerQueue.Email,
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
-    errorHandler: createRetryErrorHandler('email.notifications'),
+    errorHandler: createRetryErrorHandler(ConsumerQueue.Email),
   })
   onTerminalEvent(
     event: OrderCompletedEvent | OrderFailedEvent,

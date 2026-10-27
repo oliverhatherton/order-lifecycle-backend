@@ -57,6 +57,28 @@ describe('Observability — metrics (e2e)', () => {
     expect(body).not.toContain('route="/auth/does-not-exist"');
   });
 
+  it('does not count its own scrape as API traffic', async () => {
+    await metricsBody();
+    await metricsBody();
+
+    const body = await metricsBody();
+    expect(body).not.toContain('route="/metrics"');
+    // Nest runs global interceptors around non-HTTP handlers too; none of
+    // those may surface as fake requests.
+    expect(body).not.toContain('method="undefined"');
+  });
+
+  it('exports live pipeline gauges, degrading gracefully without the broker', async () => {
+    const body = await metricsBody();
+
+    // No orders table in this slim suite → every status still reads 0.
+    expect(body).toContain('orders_in_status{status="PENDING"} 0');
+    expect(body).toContain('# TYPE outbox_pending_messages gauge');
+    // No RabbitMQ here: queue gauges are declared but carry no samples.
+    expect(body).toContain('# TYPE rabbitmq_queue_messages gauge');
+    expect(body).not.toMatch(/^rabbitmq_queue_messages\{/m);
+  });
+
   describe('GET /metrics/history', () => {
     it('rejects an anonymous request with 401', async () => {
       await request(ctx.app.getHttpServer())

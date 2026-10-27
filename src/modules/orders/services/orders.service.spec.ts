@@ -10,6 +10,7 @@ import { ProductsService } from '@/modules/products/products.service';
 import { OrderRoutingKey } from '@/modules/messaging/events/order-events';
 import { OrderEntity } from '@/entities/order/OrderEntity';
 import { OrderStatus } from '@/entities/order/OrderStatus';
+import { orderStageDuration } from '@/modules/metrics/metrics.collectors';
 import { OrderEntityMother } from '@/entities/order/mother/OrderEntityMother';
 import type { OrderItemEntity } from '@/entities/order/OrderItemEntity';
 
@@ -350,6 +351,33 @@ describe('OrdersService', () => {
         service.transitionOrder('order-1', OrderStatus.RESERVED),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(cacheMock.del).not.toHaveBeenCalled();
+    });
+
+    it('times the completion and fulfilment stages when a PAID order completes', async () => {
+      const observe = jest.spyOn(orderStageDuration, 'observe');
+      const now = Date.now();
+      repositoryMock.findOneBy.mockResolvedValue(
+        OrderEntityMother.create({
+          id: 'order-1',
+          status: OrderStatus.PAID,
+          updatedAt: new Date(now - 2_000), // became PAID 2s ago
+          paymentInitiatedAt: new Date(now - 5_000), // Pay clicked 5s ago
+        }),
+      );
+      repositoryMock.update.mockResolvedValue({ affected: 1 });
+
+      await service.transitionOrder('order-1', OrderStatus.COMPLETED);
+
+      // observe(labels, value) — the spy's typing picks the exemplar overload.
+      const calls = observe.mock.calls as unknown as Array<
+        [{ stage: string }, number]
+      >;
+      const byStage = Object.fromEntries(
+        calls.map(([labels, value]) => [labels.stage, value]),
+      );
+      expect(byStage.completion).toBeCloseTo(2, 0);
+      expect(byStage.fulfilment).toBeCloseTo(5, 0);
+      observe.mockRestore();
     });
 
     it('invalidates the cached order and the owner list after a transition', async () => {

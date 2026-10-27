@@ -5,6 +5,18 @@ export const ORDER_DLX = 'order_lifecycle.dlx';
 export const ORDER_DLQ = 'order_lifecycle.dlq';
 
 /**
+ * The durable work queue each consumer reads. Named here (not inline in the
+ * @RabbitSubscribe decorators) so the queue-depth gauges in LiveGaugesService
+ * check exactly the queues the consumers declare.
+ */
+export const ConsumerQueue = {
+  Inventory: 'inventory.order_created',
+  Payment: 'payment.inventory_reserved',
+  Completion: 'completion.payment_processed',
+  Email: 'email.notifications',
+} as const;
+
+/**
  * Routing keys for the order lifecycle events. Consumers bind their queues to
  * these keys on {@link ORDER_EXCHANGE}.
  */

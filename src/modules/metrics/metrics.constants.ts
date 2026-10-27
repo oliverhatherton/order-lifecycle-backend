@@ -19,6 +19,10 @@ export const PERSISTED_METRICS = [
   'memory_heap_used_bytes',
   'memory_rss_bytes',
   'cpu_percent',
+  'orders_created',
+  'order_stage_duration_ms',
+  'order_failures',
+  'payment_authorizations',
 ] as const;
 
 /**

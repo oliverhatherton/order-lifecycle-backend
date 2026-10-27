@@ -51,6 +51,41 @@ Failed handlers retry with exponential backoff (1s → 2s → 4s, via
 sum by (consumer, outcome) (rate(consumer_messages_total{outcome=~"retried|failed"}[5m]))
 ```
 
+## Order pipeline
+
+Live orders by status (DB-backed gauge, read on each scrape), and stage
+latency — `reservation`, `payment` (Pay → PAID), `completion`, `fulfilment`
+(Pay → COMPLETED):
+
+```promql
+orders_in_status{status=~"PENDING|RESERVED|PAID"}
+histogram_quantile(0.95, sum by (le, stage) (rate(order_stage_duration_seconds_bucket[5m])))
+```
+
+Why orders fail, and what the payment gateway did (`authorized`, `declined`,
+`deduplicated`, `in_flight`, `takeover`):
+
+```promql
+sum by (reason) (rate(order_failures_total[5m]))
+sum by (outcome) (rate(payment_authorizations_total[5m]))
+```
+
+## Queues & outbox
+
+Broker-reported depth and consumers per queue (work queues + DLQ), and the
+outbox backlog. A work queue with 0 consumers, a non-empty DLQ, or a growing
+oldest-pending age are the three "something is stuck" signals:
+
+```promql
+rabbitmq_queue_messages
+rabbitmq_queue_consumers{queue!="order_lifecycle.dlq"} == 0
+outbox_pending_messages
+outbox_oldest_pending_age_seconds
+```
+
+The HTTP histogram excludes `GET /metrics` itself, so scrapes and dashboard
+polling don't show up as API traffic.
+
 ## Consumers & DB (5.3)
 
 **Spot a slow consumer** — p95 processing time per consumer:

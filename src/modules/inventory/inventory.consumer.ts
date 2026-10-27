@@ -8,12 +8,14 @@ import { OutboxService } from '@/modules/messaging/outbox/outbox.service';
 import { createRetryErrorHandler } from '@/modules/messaging/retry-error-handler';
 import { processEventOnce } from '@/modules/messaging/process-event-once';
 import { runWithCorrelationId } from '@/common/correlation/correlation';
+import { recordOrderFailure } from '@/modules/metrics/metrics.collectors';
 import { OrdersService } from '@/modules/orders/services/orders.service';
 import {
   InsufficientStockError,
   ProductsService,
 } from '@/modules/products/products.service';
 import {
+  ConsumerQueue,
   ORDER_DLX,
   ORDER_EXCHANGE,
   OrderRoutingKey,
@@ -55,9 +57,9 @@ export class InventoryConsumer {
   @RabbitSubscribe({
     exchange: ORDER_EXCHANGE,
     routingKey: OrderRoutingKey.Created,
-    queue: 'inventory.order_created',
+    queue: ConsumerQueue.Inventory,
     queueOptions: { durable: true, deadLetterExchange: ORDER_DLX },
-    errorHandler: createRetryErrorHandler('inventory.order_created'),
+    errorHandler: createRetryErrorHandler(ConsumerQueue.Inventory),
   })
   onOrderCreated(
     event: OrderCreatedEvent,
@@ -117,6 +119,9 @@ export class InventoryConsumer {
     if (outcome === 'skipped') return;
 
     if (shortProductId) {
+      // Counted only once the FAILED transition has committed (a skipped
+      // redelivery returned above), so the reason total matches reality.
+      recordOrderFailure('insufficient_stock');
       this.logger.log(
         `Order ${event.orderId} failed: insufficient stock for product ${shortProductId}`,
       );
