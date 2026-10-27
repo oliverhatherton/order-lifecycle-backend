@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793140686616,
+  "lastUpdate": 1793142469788,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — latency": [
@@ -572,6 +572,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
             "value": 56.16,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "4e979634bb0fbc387cf8470dd10ee96b044c83e6",
+          "message": "feat: motorsport shop catalog; retire the placeholder products\n\nSeeds 18 motorsport products (driver kit, car parts, track-day gear) with\nbelievable stock levels. The old widget SKUs are retired rather than\ndeleted, since past order items reference them: a new products.active\ncolumn (with migration) hides them from the shop, the cart and stock\nreplenishment, and the seeder clears them from any open cart.",
+          "timestamp": "2026-10-27T23:04:42Z",
+          "tree_id": "38a3f5458d5212417a3f05f6ff3793fa55adbb2c",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/4e979634bb0fbc387cf8470dd10ee96b044c83e6"
+        },
+        "date": 1793142469352,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) p50",
+            "value": 23.15,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p90",
+            "value": 29.83,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p99",
+            "value": 43.34,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p50",
+            "value": 34.45,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p90",
+            "value": 39.11,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p99",
+            "value": 218.62,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p50",
+            "value": 24.23,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p90",
+            "value": 28.27,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p99",
+            "value": 42.13,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p50",
+            "value": 23.93,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p90",
+            "value": 27.16,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
+            "value": 42.05,
             "unit": "ms"
           }
         ]
