@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793131676844,
+  "lastUpdate": 1793132184231,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — latency": [
@@ -152,6 +152,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
             "value": 34.01,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "17703fc7bca4a5397f37f3d1d9263dd673539a21",
+          "message": "feat: replace autocannon load test with k6 and add cache on/off A/B\n\nops/load-test.k6.js seeds real completed orders through the full pipeline,\nthen load-tests /health, /products, /orders and /orders/:id, writing the same\nreport shape so the CI benchmark trends continue. pnpm load:cache-ab runs\nalternating cache-on/off rounds against fresh app processes and reports\nmedians. CI installs k6 via grafana/setup-k6-action. The compose Postgres\nhost port is now overridable (POSTGRES_HOST_PORT).",
+          "timestamp": "2026-07-05T17:31:26+01:00",
+          "tree_id": "f5879274467d7f9cee73d99e6b0091738c2576b3",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/17703fc7bca4a5397f37f3d1d9263dd673539a21"
+        },
+        "date": 1793132183481,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) p50",
+            "value": 33.44,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p90",
+            "value": 42.67,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p99",
+            "value": 66.22,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p50",
+            "value": 45.47,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p90",
+            "value": 55.28,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p99",
+            "value": 79.74,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p50",
+            "value": 36.81,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p90",
+            "value": 43.14,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p99",
+            "value": 63.92,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p50",
+            "value": 35.9,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p90",
+            "value": 41.79,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
+            "value": 59.55,
             "unit": "ms"
           }
         ]
