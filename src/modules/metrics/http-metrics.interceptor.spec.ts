@@ -6,9 +6,8 @@ import { HttpMetricsInterceptor } from '@/modules/metrics/http-metrics.intercept
 
 describe('HttpMetricsInterceptor', () => {
   const stop = jest.fn();
-  const histogram = {
-    startTimer: jest.fn(() => stop),
-  } as unknown as Histogram<string>;
+  const startTimer = jest.fn(() => stop);
+  const histogram = { startTimer } as unknown as Histogram<string>;
 
   const interceptor = new HttpMetricsInterceptor(histogram);
 
@@ -17,6 +16,7 @@ describe('HttpMetricsInterceptor', () => {
     statusCode = 200,
   ): ExecutionContext {
     return {
+      getType: () => 'http',
       switchToHttp: () => ({
         getRequest: () => request,
         getResponse: () => ({ statusCode }),
@@ -74,5 +74,26 @@ describe('HttpMetricsInterceptor', () => {
       route: 'unknown',
       status_code: 500,
     });
+  });
+
+  it('ignores non-HTTP contexts (RabbitMQ consumers run through interceptors too)', async () => {
+    const context = {
+      getType: () => 'rmq',
+      switchToHttp: () => ({ getRequest: () => ({}) }),
+    } as unknown as ExecutionContext;
+    const next: CallHandler = { handle: () => of('ok') };
+
+    await lastValueFrom(interceptor.intercept(context, next));
+
+    expect(startTimer).not.toHaveBeenCalled();
+  });
+
+  it('does not count the Prometheus scrape as API traffic', async () => {
+    const context = contextFor({ method: 'GET', route: { path: '/metrics' } });
+    const next: CallHandler = { handle: () => of('ok') };
+
+    await lastValueFrom(interceptor.intercept(context, next));
+
+    expect(startTimer).not.toHaveBeenCalled();
   });
 });

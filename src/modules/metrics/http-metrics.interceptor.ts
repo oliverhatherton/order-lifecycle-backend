@@ -18,6 +18,12 @@ import { recordMetricSample } from '@/modules/metrics/metrics.collectors';
  * the raw URL, so path parameters don't explode label cardinality; the
  * histogram's `_count` doubles as the request counter and `status_code` yields
  * the error rate.
+ *
+ * Only HTTP requests are measured. Nest also runs global interceptors around
+ * the RabbitMQ consumers, where there is no request — those used to land as
+ * `method="undefined", route="unknown"` fake requests. The Prometheus scrape
+ * itself (`GET /metrics`) is excluded too: otherwise every dashboard poll is
+ * counted as API traffic, so an idle API reads as ~0.2 req/s per open tab.
  */
 @Injectable()
 export class HttpMetricsInterceptor implements NestInterceptor {
@@ -27,8 +33,10 @@ export class HttpMetricsInterceptor implements NestInterceptor {
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    if (context.getType() !== 'http') return next.handle();
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
+    if (routePattern(request) === SCRAPE_ROUTE) return next.handle();
     const method = request.method;
     const stop = this.histogram.startTimer();
 
@@ -50,6 +58,9 @@ export class HttpMetricsInterceptor implements NestInterceptor {
     );
   }
 }
+
+/** The Prometheus scrape endpoint, served by @willsoto/nestjs-prometheus. */
+const SCRAPE_ROUTE = '/metrics';
 
 /** The Express route pattern for this request, or `unknown` if unmatched. */
 function routePattern(request: Request): string {
