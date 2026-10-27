@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793136147489,
+  "lastUpdate": 1793136712530,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — throughput": [
@@ -214,6 +214,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
             "value": 780.3,
+            "unit": "req/sec"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "6439e4ee587dd04417ce73810baac3b3a8870693",
+          "message": "ci: run the synthetic traffic simulator intermittently against the demo API\n\nScheduled every 2h at an odd minute; ~1 in 4 slots are skipped at random and\neach run picks a random 8-20 minute length at 2-4 sessions/min, so the demo\ndashboards keep showing labelled synthetic activity without clockwork\npatterns. Wakes the sleeping Render instance first, never overlaps runs, and\ncan be triggered manually with an explicit length and rate. Target and\naccount password come from vars.SIM_BASE_URL / secrets.SIM_PASSWORD.",
+          "timestamp": "2026-10-27T21:29:00Z",
+          "tree_id": "f75b25ac348f2900d5aa26b6b6eed18299f472bf",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/6439e4ee587dd04417ce73810baac3b3a8870693"
+        },
+        "date": 1793136711003,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) req/sec",
+            "value": 577.5,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) req/sec",
+            "value": 433.6,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) req/sec",
+            "value": 551.5,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
+            "value": 555.2,
             "unit": "req/sec"
           }
         ]
