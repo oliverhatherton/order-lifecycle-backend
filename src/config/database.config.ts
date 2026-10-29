@@ -29,6 +29,11 @@ export default registerAs('database', (): TypeOrmModuleOptions => {
     synchronize: !isProduction,
     migrations,
     migrationsRun: isProduction,
+    // Connections the app holds open (pg's own default is 10). Behind a
+    // session-mode pooler (e.g. Supabase on :5432) each one pins a server
+    // connection, so stay under the pooler's pool size; a transaction-mode
+    // pooler (Supabase :6543) shares them, so a larger pool is cheap there.
+    poolSize: Number(process.env.DB_POOL_SIZE ?? 10),
     // Managed Postgres (Neon, Supabase pooler, etc.) needs TLS; Render's internal DB does not.
     ssl:
       process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined,

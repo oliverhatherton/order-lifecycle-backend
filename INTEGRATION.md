@@ -202,6 +202,7 @@ docker compose --profile observability up -d
 | --- | --- | --- |
 | `DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD` / `DB_NAME` | ✅ | Managed Postgres. |
 | `DB_SSL` | ⬜ | `true` for managed Postgres that requires TLS (Neon, Supabase). Render's internal DB: leave `false`. |
+| `DB_POOL_SIZE` | ⬜ | Postgres connections per instance (default 10). Behind Supabase's session-mode pooler (`:5432`) keep it under the pooler's pool size (15 on the free tier); with the transaction-mode pooler (`:6543`) 20–30 is fine. |
 | `RABBITMQ_URL` | ✅ | e.g. `amqps://user:pass@host/vhost` (CloudAMQP). |
 | `REDIS_URL` | ✅ | e.g. `redis://:pass@host:6379` (or `rediss://...`). |
 | `JWT_ACCESS_SECRET` | ✅ | **Long random secret** — never the dev default. |
