@@ -6,10 +6,12 @@ name: Synthetic traffic
 # `X-Traffic-Source: synthetic` and comes from sim-shopper-<n>@synthetic.example
 # accounts — it's simulated load, not usage.
 #
-# Runs are deliberately irregular: scheduled every 2h at an odd minute, ~1 in
-# 4 skipped at random, and each run picks a random length and pace. Kept light
-# because metric_events has no retention yet and Render's free Postgres is
-# capped at 1 GB — a run is roughly 20–80 sessions.
+# Runs are deliberately irregular: scheduled hourly at an odd minute, ~1 in 4
+# skipped at random, each a random length. The script shapes the pace itself —
+# a UK shopping day (quiet overnight, peak in the evening), drifting minute to
+# minute with the odd rush — so the history charts show a daily rhythm. Kept
+# light because metric_events has no retention yet and the free Postgres tier
+# is small: about 350 sessions a day, a peak-hour run roughly 40–60.
 #
 # Config (Settings → Secrets and variables → Actions):
 #   vars.SIM_BASE_URL     target API (defaults to the public demo API)
@@ -21,14 +23,14 @@ name: Synthetic traffic
 
 on:
   schedule:
-    - cron: '23 */2 * * *'
+    - cron: '23 * * * *'
   workflow_dispatch:
     inputs:
       duration_minutes:
-        description: Run length in minutes (blank = random 8–20)
+        description: Run length in minutes (blank = random 6–14)
         required: false
-      sessions_per_min:
-        description: Shopper sessions started per minute (blank = random 2–4)
+      peak_sessions_per_min:
+        description: Sessions per minute at the evening peak; other hours scale down (blank = 4)
         required: false
 
 # Never overlap: a run still going when the next fires makes the next wait
@@ -54,7 +56,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           INPUT_DURATION: ${{ inputs.duration_minutes }}
-          INPUT_RATE: ${{ inputs.sessions_per_min }}
+          INPUT_PEAK: ${{ inputs.peak_sessions_per_min }}
         run: |
           # Scheduled runs skip ~25% of the time so activity isn't clockwork;
           # a manual run always goes ahead.
@@ -63,14 +65,14 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          duration="${INPUT_DURATION:-$((8 + RANDOM % 13))}"
-          rate="${INPUT_RATE:-$((2 + RANDOM % 3))}"
+          duration="${INPUT_DURATION:-$((6 + RANDOM % 9))}"
+          peak="${INPUT_PEAK:-4}"
           {
-            echo "duration=${duration}m"
-            echo "rate=${rate}"
+            echo "duration=${duration}"
+            echo "peak=${peak}"
             echo "skip=false"
           } >> "$GITHUB_OUTPUT"
-          echo "Running ${rate} sessions/min for ${duration}m against ${SIM_BASE_URL}"
+          echo "Running ${duration} min (peak ${peak} sessions/min, scaled to the UK hour) against ${SIM_BASE_URL}"
 
       - uses: actions/checkout@v4
         if: steps.shape.outputs.skip != 'true'
@@ -97,7 +99,7 @@ jobs:
         if: steps.shape.outputs.skip != 'true'
         env:
           SIM_DURATION: ${{ steps.shape.outputs.duration }}
-          SIM_SESSIONS_PER_MIN: ${{ steps.shape.outputs.rate }}
+          SIM_PEAK_SESSIONS_PER_MIN: ${{ steps.shape.outputs.peak }}
         run: |
           # An unset secret arrives as an empty string; let the script fall
           # back to its default rather than registering with a blank password.
