@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793272929853,
+  "lastUpdate": 1793274154052,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — throughput": [
@@ -434,6 +434,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
             "value": 680.4,
+            "unit": "req/sec"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "9c28651479656825d97f19d7e1999a5b225475a3",
+          "message": "feat: shape synthetic traffic like a UK shopping day with distinct shopper types",
+          "timestamp": "2026-10-29T11:39:54Z",
+          "tree_id": "bb60690ea0310340ce61dac7b00c6470870e2faa",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/9c28651479656825d97f19d7e1999a5b225475a3"
+        },
+        "date": 1793274153401,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) req/sec",
+            "value": 1517.3,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) req/sec",
+            "value": 993.8,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) req/sec",
+            "value": 1387,
+            "unit": "req/sec"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) req/sec",
+            "value": 1409.2,
             "unit": "req/sec"
           }
         ]
