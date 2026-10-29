@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793272931348,
+  "lastUpdate": 1793274155872,
   "repoUrl": "https://github.com/oliverhatherton/order-lifecycle-backend",
   "entries": {
     "Load test — latency": [
@@ -824,6 +824,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
             "value": 59.86,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "committer": {
+            "email": "oliverhatherton@gmail.com",
+            "name": "Oliver Atherton",
+            "username": "oliverhatherton"
+          },
+          "distinct": true,
+          "id": "9c28651479656825d97f19d7e1999a5b225475a3",
+          "message": "feat: shape synthetic traffic like a UK shopping day with distinct shopper types",
+          "timestamp": "2026-10-29T11:39:54Z",
+          "tree_id": "bb60690ea0310340ce61dac7b00c6470870e2faa",
+          "url": "https://github.com/oliverhatherton/order-lifecycle-backend/commit/9c28651479656825d97f19d7e1999a5b225475a3"
+        },
+        "date": 1793274155428,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "GET /health (unauthenticated baseline) p50",
+            "value": 13.96,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p90",
+            "value": 18.67,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /health (unauthenticated baseline) p99",
+            "value": 30.4,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p50",
+            "value": 20.48,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p90",
+            "value": 26.53,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /products (authenticated, DB-backed) p99",
+            "value": 35.78,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p50",
+            "value": 15.54,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p90",
+            "value": 19.43,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders (authenticated, cache-aside list) p99",
+            "value": 28.7,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p50",
+            "value": 15.19,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p90",
+            "value": 19.39,
+            "unit": "ms"
+          },
+          {
+            "name": "GET /orders/:id (authenticated, cache-aside by id) p99",
+            "value": 30.51,
             "unit": "ms"
           }
         ]
